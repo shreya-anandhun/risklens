@@ -50,13 +50,13 @@ Rebuild the data and model from scratch, or run the tests:
 | Page | What you can do |
 |---|---|
 | **Overview** | KPIs for the consignment book, then an interactive **3D risk globe**. It shows every route coloured by risk, with animated flow and pulsing rings on high-risk positions and hotspots. Zoom in and each location gets an icon: ship, flight, truck or rail for where each consignment is now, a flag for its destination, an anchor for its origin, and a warning sign for chokepoints such as Hormuz, Suez or the Panama Canal. Hover any place for a description of it and its current situation. Click a route or vehicle to open the consignment. Below the globe: a risk-profile radar, cargo value by risk band, a departure and arrival timeline, and recent disruptions on the company's own lanes. |
-| **Consignments** | The consignment board: route, journey progress, 30-day lane risk trend, risk score and best alternative. Click a row to open its detail panel: route and dates, risk score, **alternatives table with an Apply button**, parameter scorecard with a plain-English "How is this score calculated?" section, mitigations, lane risk history, and an edit form that re-scores live. |
-| **Recommended actions** | Mitigations across all consignments, ranked by net benefit. |
+| **Consignments** | The consignment board: route, journey progress, 30-day lane risk trend, risk score and best alternative. Click a consignment for its **cargo profile**: what the goods are (HS code, dangerous-goods class), how much is loaded (units, net and gross weight, volume, packages, containers and fill), how it is packed, stowed and secured, handling rules such as "keep dry" or "away from foodstuffs", condition sensors against safe limits, documents, insurance and consignee. |
+| **Recommended actions** | Summary of net benefit, loss avoided and cost to act; a benefit-vs-cost chart; and a card for each mitigation with its rank, category, timing, reason, consignment, risk-reduction ring, cost, loss avoided, net benefit and return. Filter by category, sort, and mark actions as done (remembered in the browser). Clicking a consignment opens its risk details and alternatives. |
 | **What-if analysis** | Assess a planned consignment before booking it, with alternatives and mitigations, then add it to the book. Or upload a CSV batch; problems are reported by line and field and valid rows are still scored. |
 
 **Reset demo data** in the sidebar restores the seven original consignments after a demo.
 
-The globe uses [globe.gl](https://github.com/vasturiano/globe.gl) with Natural Earth country shapes from world-atlas. Both are vendored in `app/static/vendor`, so the portal runs offline. Port coordinates, sea-lane waypoints and hotspots live in `risklens/geo.py`. Hotspot and place risk levels are always computed from the consignment signals. A consignment whose ports are not in that file is listed as "not on the map" rather than guessed.
+The globe uses [globe.gl](https://github.com/vasturiano/globe.gl) with Natural Earth country shapes from world-atlas. Both are vendored in `app/static/vendor`, so the portal runs offline. Port coordinates, sea-lane waypoints and hotspots live in `risklens/geo.py`. Hotspot and place risk levels are always computed from the consignment signals. Cargo profiles (commodity, load, handling, sensors, documents) live in `risklens/cargo.py`; load figures are derived from each consignment's unit count. A consignment whose ports are not in the geography file is listed as "not on the map" rather than guessed.
 
 ## How it works
 
@@ -94,7 +94,7 @@ Column names are matched loosely, so `From`, `To`, `Shipment ID`, `ETA` and `OTD
 ## Project layout
 
 ```
-risklens/   config, generate_data, features, train, rules, predictor, validation, store, geo, pipeline
+risklens/   config, generate_data, features, train, rules, predictor, validation, store, geo, cargo, pipeline
 app/        main.py (FastAPI), static/ (index.html, styles.css, app.js, vendor/: Chart.js, globe.gl, topojson, country shapes)
 data/       raw/ processed/ portal/ (portal edits, git-ignored)
 models/     risk_model.json, model_meta.json

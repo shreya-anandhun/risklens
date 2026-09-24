@@ -133,3 +133,17 @@ def test_overview_geo_for_globe(client):
     # an unknown port is reported instead of drawn
     client.post("/api/consignments", json={**GOOD, "origin_port": "Atlantis"})
     assert len(client.get("/api/overview").json()["geo"]["unmapped"]) == 1
+
+
+def test_cargo_profile(client):
+    for cid in ("CN-26-0911", "CN-26-0914", "CN-26-0922"):
+        p = client.get(f"/api/consignments/{cid}/cargo").json()["profile"]
+        L = p["load"]
+        assert L["units"] > 0 and L["gross_t"] >= L["net_t"] > 0 and L["equipment_count"] >= 1
+        assert 0 < L["fill_weight"] <= 1 and 0 < L["fill_volume"] <= 1
+        assert p["handling"] and p["documents"] and all(s["status"] in ("ok", "watch", "breach") for s in p["sensors"])
+    assert client.get("/api/consignments/CN-26-0914/cargo").json()["profile"]["hazard"]["un"] == "UN 2902"
+    created = client.post("/api/consignments", json={k: v for k, v in GOOD.items() if k != "consignment_id"}).json()
+    g = client.get(f"/api/consignments/{created['consignment_id']}/cargo").json()["profile"]
+    assert g.get("generic") and g["load"]["units"] == 1000
+    assert client.get("/api/consignments/NOPE/cargo").status_code == 404

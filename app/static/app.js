@@ -36,12 +36,13 @@
   // ---------- navigation ----------
   const PAGES = {
     overview: ["Overview", () => { const s = state.overview?.summary; return s ? `${s.n} active consignments · ${s.in_transit} in transit, ${s.scheduled} scheduled · 7-day risk outlook` : ""; }],
-    consignments: ["Consignments", () => "Your consignment book. Click a row to inspect risk, compare alternatives and edit details."],
+    consignments: ["Consignments", () => "Your consignment book. Click a consignment for its cargo profile: what it is, the load, and how it must be handled."],
     actions: ["Recommended actions", () => "Mitigations across your consignments, ranked by net benefit."],
     whatif: ["What-if analysis", () => "Test a planned consignment or a batch before you book it."],
   };
   function show(view) {
     if (!PAGES[view]) view = "overview";
+    closeDrawer();
     $$(".nav-item").forEach((a) => a.classList.toggle("active", a.dataset.view === view));
     $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
     $("#page-title").textContent = PAGES[view][0]; $("#page-sub").textContent = PAGES[view][1]();
@@ -97,10 +98,79 @@
   }
 
   // ---------- actions page ----------
-  function renderActions() {
-    const o = state.overview;
-    $("#top-actions").innerHTML = o.top_actions.length ? o.top_actions.map((a) => `<div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div><div class="a-sub">${esc(a.trigger)}</div></div><div class="a-meta">Net benefit<b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b>${esc(a.timeline)}</div></div>`).join("") : `<div class="empty">No actions needed. Every consignment is within tolerance.</div>`;
+  const CAT_ICON = {
+    Monitoring: SVGI('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+    Planning: SVGI('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
+    Inventory: SVGI('<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>'),
+    Scheduling: SVGI('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    Routing: SVGI('<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h7"/>'),
+    Carrier: SVGI('<path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/>'),
+    Commercial: SVGI('<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+  };
+  function SVGI(d) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`; }
+  const DONE_KEY = "risklens.actions.done";
+  const loadDone = () => { try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || "[]")); } catch (e) { return new Set(); } };
+  const saveDone = (set) => { try { localStorage.setItem(DONE_KEY, JSON.stringify([...set])); } catch (e) { /* storage unavailable */ } };
+  const actKey = (a) => `${a.consignment_id}|${a.id}`;
+  const A = { cat: "all", sort: "net" };
+  function ring(pct, color, size = 58) {
+    const r = size / 2 - 5, c = 2 * Math.PI * r;
+    return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#EEF0F3" stroke-width="6"/><circle class="ring-v" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${c}" style="--c:${c};--off:${c * (1 - pct)}" transform="rotate(-90 ${size / 2} ${size / 2})"/></svg>`;
   }
+  function renderActions() {
+    const acts = state.overview.top_actions.map((a, i) => ({ ...a, rank: i + 1 })), done = loadDone();
+    const sum = (k) => acts.reduce((t, a) => t + a[k], 0);
+    const nDone = acts.filter((a) => done.has(actKey(a))).length, cons = new Set(acts.map((a) => a.consignment_id)).size;
+    const immediate = acts.filter((a) => /immediate/i.test(a.timeline)).length;
+    $("#act-hero").innerHTML = `
+      <div class="ah-tile main"><span class="ah-l">Net benefit if all actions are taken</span><b class="ah-v" data-final="${esc(fmtUSD(sum("net_benefit_usd")))}">${fmtUSD(sum("net_benefit_usd"))}</b><span class="ah-s">${acts.length} actions across ${cons} consignments</span><div class="ah-spark"></div></div>
+      <div class="ah-tile"><span class="ah-l">Loss avoided</span><b class="ah-v good" data-final="${esc(fmtUSD(sum("benefit_usd")))}">${fmtUSD(sum("benefit_usd"))}</b><span class="ah-s">expected, over the next 7 days</span></div>
+      <div class="ah-tile"><span class="ah-l">Cost to act</span><b class="ah-v" data-final="${esc(fmtUSD(sum("cost_usd")))}">${fmtUSD(sum("cost_usd"))}</b><span class="ah-s">${immediate} can start immediately</span></div>
+      <div class="ah-tile prog">${ring(acts.length ? nDone / acts.length : 0, "#0F4C81", 64)}<div><span class="ah-l">Progress</span><b class="ah-v">${nDone} of ${acts.length}</b><span class="ah-s">marked as done</span></div></div>`;
+    $$("#act-hero .ah-v[data-final]").forEach((el) => countUp(el, el.dataset.final));
+    // benefit vs cost chart
+    const maxV = Math.max(1, ...acts.map((a) => Math.max(a.benefit_usd, a.cost_usd)));
+    $("#act-chart").innerHTML = acts.map((a, i) => `<div class="ac-row ${done.has(actKey(a)) ? "done" : ""}" style="animation-delay:${i * 0.06}s">
+      <span class="ac-rank">${a.rank}</span>
+      <span class="ac-lab"><b>${esc(a.action)}</b><small>${esc(a.consignment_id)} · ${esc(a.lane)}</small></span>
+      <span class="ac-bars"><span class="ac-b good" style="--w:${(a.benefit_usd / maxV) * 100}%"></span><span class="ac-b bad" style="--w:${(a.cost_usd / maxV) * 100}%"></span></span>
+      <span class="ac-net"><b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b><small>net</small></span></div>`).join("");
+    // filter chips
+    const cats = [...new Set(acts.map((a) => a.category))];
+    $("#act-filter").innerHTML = [["all", "All"], ...cats.map((c) => [c, c])].map(([k, l]) => `<button data-cat="${esc(k)}" class="${A.cat === k ? "active" : ""}">${esc(l)}${k === "all" ? "" : ` <span class="n">${acts.filter((a) => a.category === k).length}</span>`}</button>`).join("");
+    const sorters = { net: (a, b) => b.net_benefit_usd - a.net_benefit_usd, red: (a, b) => b.risk_reduction - a.risk_reduction, cost: (a, b) => a.cost_usd - b.cost_usd, risk: (a, b) => b.risk_score - a.risk_score };
+    const list = acts.filter((a) => A.cat === "all" || a.category === A.cat).sort(sorters[A.sort]);
+    $("#top-actions").innerHTML = list.length ? list.map((a, i) => {
+      const isDone = done.has(actKey(a)), c = BAND_COLOR[a.risk_band], ratio = a.benefit_usd / Math.max(1, a.cost_usd);
+      return `<article class="act-card ${a.rank === 1 ? "top" : ""} ${isDone ? "done" : ""}" style="animation-delay:${i * 0.07}s" data-key="${esc(actKey(a))}">
+        <div class="act-head">
+          <span class="act-rank r${Math.min(a.rank, 4)}">#${a.rank}</span>
+          <span class="act-cat">${CAT_ICON[a.category] || CAT_ICON.Planning}${esc(a.category)}</span>
+          <span class="act-when">${CAT_ICON.Scheduling}${esc(a.timeline)}</span>
+          <span class="cost-band">${esc(a.cost_band)} cost</span>
+        </div>
+        <h3 class="act-title">${esc(a.action)}</h3>
+        <p class="act-why">${esc(a.rationale || "")}</p>
+        <button class="act-cons" data-open="${esc(a.consignment_id)}" title="Open the consignment's risk details"><span class="d" style="background:${c}"></span><span class="mono">${esc(a.consignment_id)}</span><span>${esc(a.lane)}</span>${chip(a.risk_band)}<span class="arrow">→</span></button>
+        <div class="act-metrics">
+          <div class="am-ring">${ring(a.risk_reduction, "#16A34A")}<span><b>${(a.risk_reduction * 100).toFixed(0)}%</b>risk cut</span></div>
+          <div class="am"><span>Cost</span><b>${fmtUSD(a.cost_usd)}</b></div>
+          <div class="am"><span>Loss avoided</span><b class="good">${fmtUSD(a.benefit_usd)}</b></div>
+          <div class="am net"><span>Net benefit</span><b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b><em>${ratio >= 1 ? ratio.toFixed(1) + "× return" : "costs more than it saves"}</em></div>
+        </div>
+        <div class="act-trigger"><span>Triggered by</span><b>${esc(a.trigger)}</b></div>
+        <div class="act-foot">${isDone ? '<span class="act-stamp">✓ Done</span>' : ""}<button class="btn btn-sm ${isDone ? "btn-secondary" : "btn-primary"} act-done" data-done="${esc(actKey(a))}">${isDone ? "Undo" : "Mark as done"}</button></div>
+      </article>`;
+    }).join("") : `<div class="empty">No actions in this category.</div>`;
+    requestAnimationFrame(() => $$("#view-actions .ring-v").forEach((el) => el.classList.add("go")));
+  }
+  $("#act-filter").addEventListener("click", (e) => { const b = e.target.closest("button[data-cat]"); if (!b) return; A.cat = b.dataset.cat; renderActions(); });
+  $("#act-sort").addEventListener("change", (e) => { A.sort = e.target.value; renderActions(); });
+  $("#top-actions").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-done]"); if (!b) return;
+    const done = loadDone(), k = b.dataset.done; done.has(k) ? done.delete(k) : done.add(k); saveDone(done);
+    toast(done.has(k) ? "Action marked as done" : "Action reopened"); renderActions();
+  });
 
   // ---------- globe ----------
   const SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
@@ -386,7 +456,7 @@
   function renderBoard() {
     const heads = ["Consignment", "Route", "Journey", "30-day trend", "Risk", "Best alternative"];
     $("#board").innerHTML = heads.map((h) => `<div class="bh">${h}</div>`).join("") + state.rows.map((r) => `
-      <div class="br" data-open="${esc(r.consignment_id)}">
+      <div class="br" data-cargo="${esc(r.consignment_id)}" title="Open cargo profile">
         <div><span class="cid">${esc(r.consignment_id)}</span><span class="cargo" title="${esc(r.cargo)}">${esc(r.cargo || r.supplier_name || "")}</span><span class="route-sub">${fmtUSD(r.cargo_value_usd)} · ${esc(r.supplier_name || "")}</span></div>
         <div><span class="route">${route(r)}</span><span class="route-sub"><span class="mode">${esc(r.mode || "—")}</span>${esc(r.carrier || "")}</span></div>
         <div>${journeyHTML(r.journey)}</div>
@@ -617,6 +687,126 @@
   }
 
   document.addEventListener("click", (e) => { const t = e.target.closest("[data-open]"); if (t) { e.preventDefault(); openDrawer(t.dataset.open); } });
+
+  // ---------- cargo profile (opened from the consignment board) ----------
+  const HICON = {
+    dry: '<path d="M12 3a9 9 0 0 1 9 9H3a9 9 0 0 1 9-9z"/><path d="M12 12v6a2 2 0 0 0 4 0"/>',
+    temp: '<path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>',
+    fragile: '<path d="M8 2h8l-1 7a3 3 0 0 1-6 0z"/><path d="M12 12v8M8 22h8"/>',
+    up: '<path d="M7 19V5M4 8l3-3 3 3M17 19V5M14 8l3-3 3 3"/><path d="M3 22h18"/>',
+    nostack: '<rect x="6" y="13" width="12" height="8"/><rect x="6" y="3" width="12" height="8"/><path d="M3 3l18 18"/>',
+    esd: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+    hazard: '<path d="M12 2 22 12 12 22 2 12z"/><path d="M12 8v5M12 16h.01"/>',
+    vent: '<path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 16h15a3 3 0 1 1-3 3"/><path d="M3 12h18"/>',
+    segregate: '<path d="M12 3v18"/><rect x="3" y="7" width="6" height="10" rx="1"/><rect x="15" y="7" width="6" height="10" rx="1"/>',
+    heavy: '<path d="M6 8h12l2 13H4z"/><circle cx="12" cy="5" r="3"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    moisture: '<path d="M12 2.7s7 7.3 7 12.3a7 7 0 0 1-14 0c0-5 7-12.3 7-12.3z"/>',
+    secure: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    shock: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    dust: '<path d="M17.5 19H7a5 5 0 1 1 1.1-9.9A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8z"/>',
+    seal: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+    container: '<rect x="2" y="6" width="20" height="12" rx="1"/><path d="M6 6v12M10 6v12M14 6v12M18 6v12"/>',
+    ship: '<path d="M2 20c2 1 4 1 6 0s4-1 6 0 4 1 6 0"/><path d="M4 17.5 3 13h18l-2 4.5"/><path d="M6 13V8h12v5"/>',
+    doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  };
+  const ic = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${HICON[k] || HICON.box}</svg>`;
+  const CAT_TILE = { Electronics: "esd", "Raw Materials": "heavy", Machinery: "secure", Chemicals: "hazard", Packaging: "box" };
+  const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 || /s$/.test(w) ? "" : "s"}`;
+  const fmtT = (t) => (t >= 100 ? Math.round(t).toLocaleString() : t.toFixed(1)) + " t";
+
+  async function openCargo(cid) {
+    const d = $("#drawer"); d.classList.add("open"); d.setAttribute("aria-hidden", "false"); $("#drawer-backdrop").classList.add("open");
+    $("#drawer-body").innerHTML = `<div class="empty">Loading cargo profile…</div>`;
+    try {
+      const { consignment: c, profile: p } = await api(`/api/consignments/${encodeURIComponent(cid)}/cargo`);
+      $("#drawer-eyebrow").textContent = `${c.consignment_id} · Cargo profile`;
+      $("#drawer-title").textContent = c.cargo || p.commodity;
+      $("#drawer-sub").textContent = `${routeText(c)} · ${c.mode || ""} with ${c.carrier || "—"}`;
+      const body = $("#drawer-body");
+      body.innerHTML = `<div class="drawer-stack cargo-profile">${cargoHero(c, p)}${cargoLoad(p)}${cargoCarried(c, p)}${cargoHandling(p)}${cargoSensors(c, p)}${cargoDocs(p)}</div>`;
+      body.scrollTop = 0;
+      requestAnimationFrame(() => $$("#drawer-body .ring-v, #drawer-body .cf-fill, #drawer-body .sn-mark").forEach((el) => el.classList.add("go")));
+    } catch (e) { $("#drawer-body").innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+  function cargoHero(c, p) {
+    const hz = p.hazard;
+    return `<div class="card-lite cg-hero">
+      <div class="cg-top"><span class="cg-tile">${ic(CAT_TILE[c.product_category] || "box")}</span>
+        <div><div class="cg-kicker">What it is</div><h3 class="cg-name">${esc(p.commodity)}</h3></div></div>
+      <p class="cg-about">${esc(p.about)}</p>
+      <div class="cg-chips">
+        ${p.hs_code ? `<span class="cg-chip" title="${esc(p.hs_desc || "")}"><em>HS</em>${esc(p.hs_code)}</span>` : ""}
+        ${hz ? `<span class="cg-chip dg"><em>DG</em>${esc(hz.label)}</span>` : `<span class="cg-chip ok"><em>✓</em>Non-hazardous</span>`}
+        ${p.incoterm ? `<span class="cg-chip"><em>Terms</em>${esc(p.incoterm)}</span>` : ""}
+        <span class="cg-chip"><em>Value</em>${fmtUSD(p.value_usd)}</span>
+        ${p.generic ? `<span class="cg-chip warn"><em>!</em>Standard profile</span>` : ""}
+      </div>
+      ${hz ? `<div class="cg-dg"><div class="dg-diamond"><span>${esc(hz.code)}</span></div><div class="dg-txt"><b>${esc(hz.name)}</b><span>${[hz.un, hz.pg ? "Packing group " + hz.pg : null, hz.marine_pollutant ? "Marine pollutant" : null].filter(Boolean).map(esc).join(" · ") || esc(hz.label)}</span></div></div>` : ""}
+    </div>`;
+  }
+  function cargoLoad(p) {
+    const L = p.load, eq = p.equipment, n = L.equipment_count, show = Math.min(n, 12), fill = Math.max(L.fill_weight, L.fill_volume);
+    const glyph = (i) => `<svg class="cf" viewBox="0 0 60 26" style="animation-delay:${i * 0.05}s"><rect x="1" y="1" width="58" height="24" rx="2" fill="#F8FAFC" stroke="#98A2B3"/><rect class="cf-fill" x="2.5" y="2.5" height="21" rx="1" fill="#0F4C81" opacity=".82" style="--w:${55 * fill}px"/>${[10, 20, 30, 40, 50].map((x) => `<line x1="${x}" x2="${x}" y1="3" y2="23" stroke="#fff" stroke-opacity=".35"/>`).join("")}</svg>`;
+    return `<div class="card-lite">
+      <div class="section-title"><span>How much is loaded</span><span class="tag">derived from ${plural(L.units, p.unit_label)}</span></div>
+      <div class="cg-stats">
+        <div><span>Quantity</span><b>${Number(L.units).toLocaleString()}</b><small>${esc(p.unit_label)}${L.units === 1 ? "" : "s"}</small></div>
+        <div><span>Net weight</span><b>${fmtT(L.net_t)}</b><small>cargo only</small></div>
+        <div><span>Gross weight</span><b>${fmtT(L.gross_t)}</b><small>with packing</small></div>
+        <div><span>Volume</span><b>${Math.round(L.volume_m3).toLocaleString()} m³</b><small>stowed</small></div>
+        <div><span>Packages</span><b>${Number(L.packages).toLocaleString()}</b><small>${esc(p.package_label)}${L.packages === 1 ? "" : "s"}</small></div>
+      </div>
+      <div class="cg-eq">
+        <div class="cg-eq-vis">${Array.from({ length: show }, (_, i) => glyph(i)).join("")}${n > show ? `<span class="cg-more">+${n - show}</span>` : ""}</div>
+        <div class="cg-eq-txt"><b>${n} × ${esc(eq.name)}</b>
+          <div class="cg-fill"><span>By weight</span><i><em style="--w:${L.fill_weight * 100}%"></em></i><b>${(L.fill_weight * 100).toFixed(0)}%</b></div>
+          <div class="cg-fill"><span>By volume</span><i><em style="--w:${L.fill_volume * 100}%"></em></i><b>${(L.fill_volume * 100).toFixed(0)}%</b></div>
+          <small>Limited by ${esc(L.limited_by)} · max ${eq.payload_t} t and ${eq.volume_m3} m³ each</small></div>
+      </div>
+    </div>`;
+  }
+  function cargoCarried(c, p) {
+    const steps = [["box", "Packed", p.packing], ["container", "Equipment", `${p.load.equipment_count} × ${p.equipment.name}`], ["ship", "Stowage", p.stowage], ["secure", "Secured", p.securing]];
+    return `<div class="card-lite"><div class="section-title"><span>How it's carried</span><span class="tag">${esc(c.mode || "")} · ${esc(c.carrier || "")}</span></div>
+      <ol class="cg-steps">${steps.map(([k, t, d], i) => `<li style="animation-delay:${0.1 + i * 0.08}s"><span class="st-ic">${ic(k)}</span><div><b>${t}</b><p>${esc(d)}</p></div></li>`).join("")}</ol></div>`;
+  }
+  function cargoHandling(p) {
+    const hs = [...p.handling].sort((a, b) => b.critical - a.critical);
+    return `<div class="card-lite"><div class="section-title"><span>Handling requirements</span><span class="tag">${hs.filter((h) => h.critical).length} critical</span></div>
+      <div class="cg-hand">${hs.map((h, i) => `<div class="hd ${h.critical ? "crit" : ""}" style="animation-delay:${0.1 + i * 0.07}s"><span class="hd-ic">${ic(h.icon)}</span><div><b>${esc(h.title)}${h.critical ? '<span class="crit-tag">Critical</span>' : ""}</b><p>${esc(h.text)}</p></div></div>`).join("")}</div></div>`;
+  }
+  function cargoSensors(c, p) {
+    if (!p.sensors.length) return `<div class="card-lite"><div class="section-title"><span>Condition monitor</span></div><div class="empty small">No sensors assigned to this consignment yet.</div></div>`;
+    const live = c.journey?.status === "In transit";
+    const rows = p.sensors.map((s) => {
+      if (s.text) return `<div class="sn"><span class="sn-n">${esc(s.name)}</span><span class="sn-pill ok">${esc(s.text)}</span><span class="sn-st ok">OK</span></div>`;
+      const lo = s.min ?? null, hi = s.max ?? null;
+      const d0 = Math.min(0, lo ?? 0, s.value), d1 = Math.max(hi != null ? hi * 1.25 : (lo ?? 1) * 2.5, s.value * 1.1);
+      const X = (v) => ((v - d0) / (d1 - d0)) * 100, safeL = X(lo ?? d0), safeR = X(hi ?? d1);
+      const lab = { ok: "OK", watch: "Watch", breach: "Breach" }[s.status];
+      return `<div class="sn"><span class="sn-n">${esc(s.name)}<small>${lo != null && hi != null ? `safe ${lo}–${hi} ${esc(s.unit)}` : hi != null ? `max ${hi} ${esc(s.unit)}` : `min ${lo} ${esc(s.unit)}`}</small></span>
+        <span class="sn-bar"><span class="sn-safe" style="left:${safeL}%;width:${safeR - safeL}%"></span>${hi != null ? `<span class="sn-lim" style="left:${safeR}%"></span>` : ""}${lo != null ? `<span class="sn-lim" style="left:${safeL}%"></span>` : ""}<span class="sn-mark ${s.status}" style="--x:${X(s.value)}%"><b>${s.value}${esc(s.unit.startsWith("%") || s.unit === "°" ? s.unit.replace(" RH", "") : " " + s.unit)}</b></span></span>
+        <span class="sn-st ${s.status}">${lab}</span></div>`;
+    }).join("");
+    const worst = p.sensors.some((s) => s.status === "breach") ? "breach" : p.sensors.some((s) => s.status === "watch") ? "watch" : "ok";
+    return `<div class="card-lite"><div class="section-title"><span>Condition monitor</span><span class="sn-live ${live ? "on" : ""}"><span class="jd-dot"></span>${live ? "Live · last reading 12 min ago" : "Pre-shipment reading at origin · sensors armed"}</span></div>
+      <div class="sn-sum ${worst}">${worst === "ok" ? "All readings inside safe limits." : worst === "watch" ? "One or more readings are close to a limit. Keep an eye on it." : "A reading is outside its safe limit. Act now."}</div>${rows}</div>`;
+  }
+  function cargoDocs(p) {
+    const n = p.documents.length, r = p.documents_ready;
+    return `<div class="cg-two">
+      <div class="card-lite"><div class="section-title"><span>Documents</span><span class="tag">${r} of ${n} ready</span></div>
+        <div class="doc-top">${ring(n ? r / n : 0, "#0F4C81", 52)}<div><b>${r === n ? "Ready to ship" : `${n - r} still pending`}</b><span class="muted small">Paperwork needed to move and clear this load</span></div></div>
+        <ul class="docs">${p.documents.map((d) => `<li class="${d.status}"><span class="doc-ic">${ic("doc")}</span>${esc(d.name)}<span class="doc-st">${d.status === "ready" ? "✓ Ready" : "Pending"}</span></li>`).join("")}</ul></div>
+      <div class="card-lite"><div class="section-title"><span>Cover &amp; parties</span></div>
+        <div class="cover"><span class="cv-ic">${ic("shield")}</span><div><span>Insured value</span><b>${fmtUSD(p.insured_value_usd)}</b><small>110% of cargo value</small></div></div>
+        <dl class="cv-dl"><dt>Insurance</dt><dd>${esc(p.insurance || "Not arranged")}</dd><dt>Incoterm</dt><dd>${esc(p.incoterm || "—")}</dd><dt>Consignee</dt><dd>${esc(p.consignee || "—")}</dd><dt>HS code</dt><dd>${esc(p.hs_code ? p.hs_code + " · " + p.hs_desc : "—")}</dd></dl></div>
+    </div>`;
+  }
+  document.addEventListener("click", (e) => { const t = e.target.closest("[data-cargo]"); if (t) { e.preventDefault(); openCargo(t.dataset.cargo); } });
 
   // ---------- what-if ----------
   const WHATIF_DEFAULTS = { cargo: "Lithium battery cells", supplier_name: "Shenzhen Boards", product_category: "Electronics", mode: "Sea", carrier: "Pacific Arc Lines", single_source: "1", units: 20000, average_cost_per_unit: 95, origin_port: "Shenzhen", origin_country: "China", region: "East Asia", destination_port: "Felixstowe", destination_country: "United Kingdom", destination_region: "Europe", lead_time_days: 45, lead_time_std_days: 8, reliability_score: 0.84, geopolitical_risk_index: 48, port_congestion_index: 55, weather_risk_level: "medium", price_swing_pct: 9 };

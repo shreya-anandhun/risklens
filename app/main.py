@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from risklens import store
 from risklens.geo import geo_payload
+from risklens.cargo import profile as cargo_profile
 from risklens.config import COMPANY, DATA_PROCESSED, DATA_RAW, FEATURE_KEYS, FEATURES, HORIZON_DAYS, RISK_BANDS
 from risklens.predictor import apply_changes, load_model, portfolio_summary, score_records
 from risklens.validation import OPTIONAL, REQUIRED, validate_dataframe, validate_record
@@ -149,6 +150,18 @@ def update_consignment(cid: str, body: dict):
     rec.setdefault("supplier_id", existing.get("supplier_id"))
     saved = store.upsert_consignment(rec)
     return score_records([saved], store.load_alternatives())[0]
+
+
+@app.get("/api/consignments/{cid}/cargo")
+def consignment_cargo(cid: str):
+    rec = store.get_consignment(cid)
+    if not rec:
+        raise HTTPException(404, "Consignment not found")
+    r = score_records([rec], with_alternatives=False)[0]
+    return {"consignment": {k: r[k] for k in ("consignment_id", "cargo", "supplier_name", "product_category", "mode", "carrier",
+                                            "origin_port", "origin_country", "destination_port", "destination_country",
+                                            "journey", "risk_score", "risk_band")},
+            "profile": cargo_profile(rec)}
 
 
 @app.post("/api/consignments/{cid}/apply/{alt_id}")
