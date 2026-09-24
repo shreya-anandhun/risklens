@@ -1,0 +1,9 @@
+.venv
+.git
+.claude
+__pycache__
+.pytest_cache
+data/portal
+tests
+tools
+*.md

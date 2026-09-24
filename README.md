@@ -45,6 +45,15 @@ Rebuild the data and model from scratch, or run the tests:
 .venv/bin/python -m pytest -q
 ```
 
+## Deploy publicly
+
+The portal needs its Python server (FastAPI + XGBoost), so it is deployed as a container rather than as static pages.
+
+- **Render (free):** [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/shreya-anandhun/risklens). Sign in with GitHub and Render reads `render.yaml` and builds the `Dockerfile`. You get a URL like `https://risklens-xxxx.onrender.com`. Free services sleep after about 15 minutes idle, and the first visit after that takes about a minute to wake.
+- **Any Docker host:** `docker build -t risklens . && docker run -p 8000:8000 risklens`.
+
+Portal edits and notifications are kept on the server's disk. On free hosts that disk resets on each restart or deploy, which returns the demo to its seeded state.
+
 ## What the portal shows
 
 | Page | What you can do |
