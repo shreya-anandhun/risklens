@@ -1,5 +1,5 @@
-"""One-off asset step: recolour the satellite image's navy oceans to a light
-blue from the portal palette, keeping land, ice and depth shading.
+"""One-off asset step: recolour the satellite image's oceans to the chosen
+ocean blue (#235696), keeping land, ice and a subtle depth shading.
 
     .venv/bin/pip install pillow   # dev-only dependency
     .venv/bin/python tools/lighten_ocean.py
@@ -12,8 +12,8 @@ from PIL import Image
 SRC = Path(__file__).resolve().parent.parent / "app/static/vendor/earth/earth-blue-marble.jpg"
 DST = SRC.with_name("earth-light-ocean.jpg")
 
-DEEP = np.array([122, 170, 216], dtype=float)     # open ocean, in the #1B6FB5 family but much lighter
-SHALLOW = np.array([184, 214, 240], dtype=float)  # shelves and shallow seas, near the portal's #BFD7EE
+DEEP = np.array([35, 86, 150], dtype=float)       # open ocean: the chosen #235696
+SHALLOW = np.array([50, 108, 172], dtype=float)   # shelves and shallow seas, a touch lighter
 
 
 def main():

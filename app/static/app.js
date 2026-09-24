@@ -209,7 +209,7 @@
     alert: SVG('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
   };
   const modeKey = (m) => ({ sea: "sea", air: "air", road: "road", rail: "rail" }[String(m || "").toLowerCase()] || "sea");
-  const RGB = { low: "22,163,74", elevated: "234,88,12", high: "220,38,38" };  // deep enough to read on the light-ocean imagery
+  const RGB = { low: "34,197,94", elevated: "251,146,60", high: "248,64,64" };  // bright enough to read on the #235696 ocean
   const FACTOR_NAME = { weather_risk_index: "Weather index", geopolitical_risk_index: "Geopolitical index", port_congestion_index: "Port congestion" };
   const SITUATION = {
     weather_risk: "Severe weather risk along the lane", geopolitical_risk: "Elevated geopolitical and customs risk on the corridor",

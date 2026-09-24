@@ -858,3 +858,8 @@ details.calc p { margin-top: 10px; color: var(--muted); }
 .globe-canvas canvas { cursor: grab; }
 .globe-fallback[hidden] { display: none; }
 .gl-line.high { background: rgb(220,38,38); } .gl-line.elevated { background: rgb(234,88,12); } .gl-line.low { background: rgb(22,163,74); }
+/* keep the panel header and band filter at full height when the list is long */
+.gp-head, .seg-full { flex: none; }
+.seg-full { min-height: 30px; }
+.seg-full button { line-height: 1.2; padding: 6px 0; white-space: nowrap; }
+.gl-line.high { background: rgb(248,64,64); } .gl-line.elevated { background: rgb(251,146,60); } .gl-line.low { background: rgb(34,197,94); }
