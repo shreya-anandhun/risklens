@@ -94,7 +94,6 @@
     $("#catch-rate").textContent = o.catch_rate == null ? "" : `RiskLens rated ${o.catch_rate}% of these as Elevated or High in the 7 days before they happened.`;
     $("#recent-disruptions").innerHTML = `<table class="table"><thead><tr><th>Date</th><th>Lane</th><th>Cause</th><th class="num">Cost</th><th>Warned</th></tr></thead><tbody>${o.recent_disruptions.map((d) => `<tr><td class="mono">${fmtDate(d.date)}</td><td>${esc(d.lane)}<div class="sub mono">${esc(d.consignment_id)}</div></td><td>${esc(d.disruption_reason)}</td><td class="num">${fmtUSD(d.recovery_cost_usd)}</td><td>${d.flagged_in_advance ? '<span class="chip low">yes</span>' : '<span class="chip high">missed</span>'}</td></tr>`).join("")}</tbody></table>`;
     renderGlobe();
-    renderRadar(); renderDonut(); renderTimeline();
   }
 
   // ---------- actions page ----------
@@ -115,7 +114,7 @@
     alert: SVG('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
   };
   const modeKey = (m) => ({ sea: "sea", air: "air", road: "road", rail: "rail" }[String(m || "").toLowerCase()] || "sea");
-  const RGB = { low: "21,128,61", elevated: "180,83,9", high: "185,28,28" };
+  const RGB = { low: "34,197,94", elevated: "251,146,60", high: "248,64,64" };  // bright enough to read on satellite imagery
   const FACTOR_NAME = { weather_risk_index: "Weather index", geopolitical_risk_index: "Geopolitical index", port_congestion_index: "Port congestion" };
   const SITUATION = {
     weather_risk: "Severe weather risk along the lane", geopolitical_risk: "Elevated geopolitical and customs risk on the corridor",
@@ -135,7 +134,7 @@
     let rem = t * tot; for (let i = 0; i < seg.length; i++) { if (rem <= seg[i]) return slerp(pts[i], pts[i + 1], seg[i] ? rem / seg[i] : 0); rem -= seg[i]; }
     return pts[pts.length - 1];
   }
-  const G = { g: null, band: "all", focus: null, mouse: [0, 0], ready: false, loading: null };
+  const G = { g: null, band: "all", focus: null, mouse: [0, 0], ready: false, loading: null, near: false, rotateWanted: true, idle: null };
 
   function signalBars(i) {
     const rows = [["Weather", i.weather_risk_index], ["Geopolitical", i.geopolitical_risk_index], ["Port congestion", i.port_congestion_index]].filter(([, v]) => v != null);
@@ -247,13 +246,43 @@
     return el;
   }
 
-  function flyTo(lat, lng, altitude = 1.1) { if (!G.g) return; setRotate(false); G.g.pointOfView({ lat, lng, altitude }, 1400); }
-  function setRotate(on) { if (!G.g) return; G.g.controls().autoRotate = on; $("#gc-rotate").classList.toggle("active", on); $("#gc-rotate").setAttribute("aria-pressed", on); }
+  function onZoom({ altitude }) {
+    const near = altitude < 1.45, ctr = G.g.controls();
+    // Slower, finer control up close; faster when viewing the whole planet.
+    ctr.rotateSpeed = Math.max(0.12, Math.min(1.1, altitude * 0.42));
+    ctr.zoomSpeed = Math.max(0.5, Math.min(1.4, altitude * 0.55));
+    if (near !== G.near) { G.near = near; $("#globe-stage").classList.toggle("near", near); G.g.polygonStrokeColor(G.g.polygonStrokeColor()); if (near) ctr.autoRotate = false; }
+    declutter();
+  }
+  // Hide map labels that would collide with a higher-priority label (vehicle > destination > origin > hotspot).
+  const LABEL_RANK = { vehicle: 0, dest: 1, origin: 2, hot: 3 };
+  let declutterQueued = false;
+  function declutter() {
+    if (declutterQueued) return; declutterQueued = true;
+    requestAnimationFrame(() => {
+      declutterQueued = false;
+      const stage = $("#globe-stage"); if (!stage.classList.contains("near")) return;
+      const marks = [...stage.querySelectorAll(".gm")].filter((m) => !m.classList.contains("hidden-behind") && m.style.display !== "none");
+      const rank = (m) => LABEL_RANK[["vehicle", "dest", "origin", "hot"].find((c) => m.classList.contains(c))] ?? 9;
+      marks.sort((a, b) => rank(a) - rank(b));
+      const kept = marks.map((m) => m.querySelector(".badge")?.getBoundingClientRect()).filter((r) => r && r.width);
+      const hit = (a, b) => !(a.right + 4 <= b.left || b.right + 4 <= a.left || a.bottom + 2 <= b.top || b.bottom + 2 <= a.top);
+      for (const m of marks) {
+        const l = m.querySelector(".lbl"); if (!l) continue;
+        l.classList.remove("lbl-hide");
+        const r = l.getBoundingClientRect();
+        if (kept.some((k) => hit(r, k))) l.classList.add("lbl-hide"); else kept.push(r);
+      }
+    });
+  }
+  function scheduleResume() { clearTimeout(G.idle); if (!G.rotateWanted) return; G.idle = setTimeout(() => { if (G.rotateWanted && !G.near && G.g) G.g.controls().autoRotate = true; }, 6000); }
+  function flyTo(lat, lng, altitude = 1.1) { if (!G.g) return; clearTimeout(G.idle); G.g.controls().autoRotate = false; hideTip(); G.g.pointOfView({ lat, lng, altitude }, 1400); setTimeout(scheduleResume, 1500); }
+  function setRotate(on) { if (!G.g) return; G.rotateWanted = on; clearTimeout(G.idle); G.g.controls().autoRotate = on && !G.near; $("#gc-rotate").classList.toggle("active", on); $("#gc-rotate").setAttribute("aria-pressed", on); $("#gc-rotate").title = on ? "Auto-rotate on" : "Auto-rotate off"; }
   function focusConsignment(cid) {
     const r = state.rows.find((x) => x.consignment_id === cid), g = state.overview.geo.routes[cid]; if (!r || !g) return;
     G.focus = G.focus === cid ? null : cid; paintGlobe();
     const j = r.journey, pos = j && j.status === "In transit" ? along(g.points, j.progress) : along(g.points, 0.5);
-    flyTo(pos[0], pos[1], G.focus ? 1.25 : 2.1);
+    flyTo(pos[0], pos[1], G.focus ? 1.25 : 2.35);
   }
 
   function paintGlobe() {
@@ -261,13 +290,19 @@
     const D = buildGlobeData(); G.data = D;
     const alpha = (d, a) => (d.on && (!G.focus || d.r.consignment_id === G.focus) ? a : a * 0.12);
     g.pathsData(D.paths).arcsData(D.arcs).ringsData(D.rings.filter((x) => x.on)).htmlElementsData(D.markers);
-    g.pathColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.35)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.2)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
-    g.arcColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.3)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.15)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    g.pathColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.6)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.2)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    g.arcColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.55)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.15)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
     // lists
-    $("#globe-list").innerHTML = D.rows.map((r) => `<div class="gp-item ${G.focus === r.consignment_id ? "on" : ""}" data-focus="${esc(r.consignment_id)}" style="${G.band !== "all" && r.risk_band !== G.band ? "opacity:.4" : ""}"><span class="d" style="background:${BAND_COLOR[r.risk_band]}"></span><span class="t">${esc(routeText(r))}<span class="s">${esc(r.consignment_id)} · ${esc(r.mode || "")} · ${esc(r.journey?.status || "")}</span></span><span class="v" style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(0)}</span></div>`).join("");
+    $("#gp-count").textContent = `${D.rows.filter((r) => G.band === "all" || r.risk_band === G.band).length} of ${D.rows.length}`;
+    $("#globe-list").innerHTML = D.rows.map((r) => `<div class="gp-item ${G.focus === r.consignment_id ? "on" : ""} ${G.band !== "all" && r.risk_band !== G.band ? "off" : ""}" data-focus="${esc(r.consignment_id)}" role="button" tabindex="0" title="Fly to ${esc(routeText(r))}">
+      <span class="d" style="background:${BAND_COLOR[r.risk_band]}"></span>
+      <span class="gp-txt"><span class="t">${esc(routeText(r))}</span><span class="s">${esc(r.consignment_id)} · ${esc(r.mode || "")} · ${esc(r.journey?.status || "")}</span></span>
+      <span class="v" style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(0)}</span>
+      <button class="gp-open" data-open="${esc(r.consignment_id)}" title="Open ${esc(r.consignment_id)} details" aria-label="Open ${esc(r.consignment_id)} details">→</button></div>`).join("");
     const hs = [...D.hot].sort((a, b) => b.level - a.level);
     $("#hotspot-count").textContent = `${hs.filter((h) => h.band !== "low").length} active`;
-    $("#hotspot-list").innerHTML = hs.map((h) => `<div class="gp-item" data-hot="${esc(h.id)}"><span class="d" style="background:${BAND_COLOR[h.band]}"></span><span class="t">${esc(h.name)}<span class="s">${FACTOR_NAME[h.factor]} ${h.level.toFixed(0)}</span></span><span class="v" style="color:${BAND_COLOR[h.band]};font-size:11px;text-transform:capitalize">${h.band}</span></div>`).join("");
+    $("#hotspot-list").innerHTML = hs.map((h) => `<div class="gp-item hot" data-hot="${esc(h.id)}" role="button" tabindex="0" title="Fly to ${esc(h.name)}"><span class="d" style="background:${BAND_COLOR[h.band]}"></span><span class="gp-txt"><span class="t">${esc(h.name)}</span><span class="s">${FACTOR_NAME[h.factor]} ${h.level.toFixed(0)}</span></span><span class="v band" style="color:${BAND_COLOR[h.band]}">${h.band}</span></div>`).join("");
+    setTimeout(declutter, 60);
     const unm = state.overview.geo.unmapped.length;
     $("#globe-sub").textContent = `${D.rows.length} routes · ${hs.filter((h) => h.band !== "low").length} active risk hotspots${unm ? ` · ${unm} consignment${unm > 1 ? "s" : ""} with ports not on the map` : ""}`;
   }
@@ -279,20 +314,16 @@
     if (typeof Globe !== "function" || typeof topojson === "undefined") { fb.hidden = false; fb.textContent = "The 3D map could not load in this browser."; return; }
     G.loading = (async () => {
       const world = await fetch("/static/vendor/countries-110m.json").then((r) => r.json());
-      const land = topojson.feature(world, world.objects.countries).features;
-      // The hex tiler fails on North Korea's 110m outline; it still appears in the solid land layer.
-      const hexLand = land.filter((f) => f.id !== "408");
+      const land = topojson.feature(world, world.objects.countries).features.filter((f) => f.id !== "010");
       const el = $("#globe"), stage = $("#globe-stage");
       let g;
       try { g = new Globe(el, { animateIn: true }); } catch (e) { g = Globe({ animateIn: true })(el); }
       G.g = g;
       g.width(el.clientWidth).height(el.clientHeight).backgroundColor("rgba(0,0,0,0)")
-        .showAtmosphere(true).atmosphereColor("#7FB0DE").atmosphereAltitude(0.17)
-        .hexPolygonsData(hexLand).hexPolygonResolution(3).hexPolygonMargin(0.42).hexPolygonAltitude(0.004)
-        .hexPolygonColor(() => "rgba(120,142,168,0.78)")
-        .polygonsData(land.filter((f) => f.id !== "010"))
-        .polygonAltitude(0.0015).polygonCapColor(() => "rgba(172,190,211,0.5)").polygonSideColor(() => "rgba(0,0,0,0)")
-        .polygonStrokeColor(() => "rgba(255,255,255,0.9)").polygonsTransitionDuration(0)
+        .globeImageUrl("/static/vendor/earth/earth-blue-marble.jpg").bumpImageUrl("/static/vendor/earth/earth-topology.png")
+        .showAtmosphere(true).atmosphereColor("#8EC5FF").atmosphereAltitude(0.15)
+        .polygonsData(land).polygonAltitude(0.0012).polygonCapColor(() => "rgba(0,0,0,0)").polygonSideColor(() => "rgba(0,0,0,0)")
+        .polygonStrokeColor(() => (G.near ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.14)")).polygonsTransitionDuration(0)
         .pathPoints("points").pathPointLat((p) => p[0]).pathPointLng((p) => p[1]).pathPointAlt(0.006).pathResolution(2)
         .pathStroke((d) => (d.kind === "base" ? 1.1 : 2.4)).pathDashLength((d) => (d.kind === "base" ? 1 : 0.06)).pathDashGap((d) => (d.kind === "base" ? 0 : 0.04))
         .pathDashAnimateTime((d) => (d.kind === "base" ? 0 : 14000)).pathTransitionDuration(0)
@@ -305,13 +336,18 @@
         .onPathHover((d) => { el.style.cursor = d ? "pointer" : ""; d ? showTip(tipConsignment(d.r, `${d.r.mode} route`)) : hideTip(); })
         .onArcHover((d) => { el.style.cursor = d ? "pointer" : ""; d ? showTip(tipConsignment(d.r, "Air route")) : hideTip(); })
         .onPathClick((d) => openDrawer(d.r.consignment_id)).onArcClick((d) => openDrawer(d.r.consignment_id))
-        .onZoom(({ altitude }) => stage.classList.toggle("near", altitude < 1.45));
-      const mat = g.globeMaterial(); mat.color.set("#F4F8FC"); if (mat.emissive) mat.emissive.set("#DCE7F2"); if ("emissiveIntensity" in mat) mat.emissiveIntensity = 0.35; if ("shininess" in mat) mat.shininess = 8;
-      const ctr = g.controls(); ctr.autoRotate = true; ctr.autoRotateSpeed = 0.35; ctr.minDistance = 115; ctr.maxDistance = 520; ctr.enableDamping = true;
+        .onZoom(onZoom)
+        .onGlobeReady(() => { const m = g.globeMaterial(); if (m.map) { m.map.anisotropy = g.renderer().capabilities.getMaxAnisotropy(); m.map.needsUpdate = true; } if ("bumpScale" in m) m.bumpScale = 6; if ("shininess" in m) m.shininess = 12; stage.classList.add("ready"); });
+      g.renderer().setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      const ctr = g.controls(); ctr.autoRotate = true; ctr.autoRotateSpeed = 0.3; ctr.minDistance = 108; ctr.maxDistance = 560;
+      ctr.enableDamping = true; ctr.dampingFactor = 0.08; ctr.enablePan = false;
+      // Pause auto-rotate while the user drags or zooms; resume after a few idle seconds (never when zoomed in).
+      ctr.addEventListener("start", () => { clearTimeout(G.idle); ctr.autoRotate = false; hideTip(); });
+      ctr.addEventListener("end", scheduleResume);
+      ctr.addEventListener("change", declutter);
       g.pointOfView({ lat: 18, lng: 30, altitude: 2.35 });
       stage.addEventListener("mousemove", (e) => { const b = stage.getBoundingClientRect(); G.mouse = [e.clientX - b.left, e.clientY - b.top]; placeTip(); });
       stage.addEventListener("mouseleave", hideTip);
-      stage.addEventListener("pointerdown", (e) => { if (e.target.closest("canvas")) setRotate(false); });
       new ResizeObserver(() => g.width(el.clientWidth).height(el.clientHeight)).observe(el);
       paintGlobe();
     })();
@@ -319,65 +355,15 @@
   }
   function globePause() { if (G.g) G.g.pauseAnimation(); hideTip(); }
   function globeResume() { if (G.g) { G.g.resumeAnimation(); if (state.globeDirty) { state.globeDirty = false; paintGlobe(); } } }
-  $("#gc-rotate").addEventListener("click", () => setRotate(!G.g?.controls().autoRotate));
-  $("#gc-reset").addEventListener("click", () => { G.focus = null; paintGlobe(); G.g?.pointOfView({ lat: 18, lng: 30, altitude: 2.35 }, 1200); setRotate(true); });
-  const zoomBy = (k) => { if (!G.g) return; const p = G.g.pointOfView(); G.g.pointOfView({ ...p, altitude: Math.max(0.2, Math.min(4.5, p.altitude * k)) }, 500); };
+  $("#gc-rotate").addEventListener("click", () => setRotate(!G.rotateWanted));
+  $("#gc-reset").addEventListener("click", () => { if (!G.g) return; G.focus = null; paintGlobe(); hideTip(); G.g.pointOfView({ lat: 18, lng: 30, altitude: 2.35 }, 1200); setTimeout(() => setRotate(true), 1250); });
+  const zoomBy = (k) => { if (!G.g) return; clearTimeout(G.idle); G.g.controls().autoRotate = false; const p = G.g.pointOfView(); G.g.pointOfView({ ...p, altitude: Math.max(0.08, Math.min(4.2, p.altitude * k)) }, 450); setTimeout(scheduleResume, 500); };
   $("#gc-in").addEventListener("click", () => zoomBy(0.65)); $("#gc-out").addEventListener("click", () => zoomBy(1.5));
   $("#globe-filter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; $$("#globe-filter button").forEach((x) => x.classList.toggle("active", x === b)); G.band = b.dataset.band; G.focus = null; paintGlobe(); });
-  $("#globe-list").addEventListener("click", (e) => { const it = e.target.closest("[data-focus]"); if (it) focusConsignment(it.dataset.focus); });
-  $("#globe-list").addEventListener("dblclick", (e) => { const it = e.target.closest("[data-focus]"); if (it) openDrawer(it.dataset.focus); });
-  $("#hotspot-list").addEventListener("click", (e) => { const it = e.target.closest("[data-hot]"); if (!it) return; const h = G.data.hot.find((x) => x.id === it.dataset.hot); if (h) flyTo(h.lat, h.lng, 0.95); });
-
-  // ---------- diagrams ----------
-  function renderRadar() {
-    const feats = state.meta.features, rows = state.rows; if (!rows.length) return;
-    const total = rows.reduce((a, r) => a + r.cargo_value_usd, 0) || 1;
-    const val = (r, k) => r.factors.find((f) => f.key === k)?.value || 0;
-    const avg = feats.map((f) => rows.reduce((a, r) => a + val(r, f.key) * r.cargo_value_usd, 0) / total);
-    const worst = rows.reduce((a, b) => (b.risk_score > a.risk_score ? b : a));
-    state.charts.radar?.destroy();
-    state.charts.radar = new Chart($("#chart-radar"), { type: "radar", data: {
-      labels: feats.map((f) => f.label.replace(" & climate", "").replace("Commodity price", "Price").replace("Supplier", "Carrier")),
-      datasets: [
-        { label: "Book average (value-weighted)", data: avg, borderColor: "#0F4C81", backgroundColor: "rgba(15,76,129,.14)", pointBackgroundColor: "#0F4C81", borderWidth: 2, pointRadius: 3 },
-        { label: `Riskiest: ${worst.consignment_id}`, data: feats.map((f) => val(worst, f.key)), borderColor: "#B91C1C", backgroundColor: "rgba(185,28,28,.06)", borderDash: [5, 4], pointBackgroundColor: "#B91C1C", borderWidth: 1.6, pointRadius: 2.5 } ] },
-      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 900 }, plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.raw.toFixed(2)}` } } },
-        scales: { r: { min: 0, max: 1, ticks: { stepSize: 0.25, display: false }, grid: { color: "#E4E7EC" }, angleLines: { color: "#E4E7EC" }, pointLabels: { font: { size: 10.5 }, color: "#344054" } } } } });
-  }
-  function renderDonut() {
-    const rows = state.rows, bands = ["high", "elevated", "low"];
-    const vals = bands.map((b) => rows.filter((r) => r.risk_band === b).reduce((a, r) => a + r.cargo_value_usd, 0));
-    const counts = bands.map((b) => rows.filter((r) => r.risk_band === b).length);
-    const total = vals.reduce((a, b) => a + b, 0) || 1;
-    state.charts.donut?.destroy();
-    state.charts.donut = new Chart($("#chart-donut"), { type: "doughnut", data: { labels: bands.map((b) => b[0].toUpperCase() + b.slice(1)), datasets: [{ data: vals, backgroundColor: bands.map((b) => BAND_COLOR[b]), borderColor: "#fff", borderWidth: 3, hoverOffset: 8 }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: "70%", animation: { animateRotate: true, duration: 1100 }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.label}: ${fmtUSD(c.raw)}` } } } } });
-    $("#donut-center").innerHTML = `<div><b>${fmtUSD(total)}</b><span>cargo value</span></div>`;
-    $("#donut-legend").innerHTML = bands.map((b, i) => `<div class="dl-row"><i style="background:${BAND_COLOR[b]}"></i><span><b>${b[0].toUpperCase() + b.slice(1)}</b><span class="p">${counts[i]} consignment${counts[i] === 1 ? "" : "s"} · ${((vals[i] / total) * 100).toFixed(0)}%</span></span><b>${fmtUSD(vals[i])}</b><div class="dl-bar"><span style="width:0;background:${BAND_COLOR[b]}" data-w="${(vals[i] / total) * 100}"></span></div></div>`).join("");
-    requestAnimationFrame(() => $$("#donut-legend .dl-bar span").forEach((s) => (s.style.width = s.dataset.w + "%")));
-  }
-  function renderTimeline() {
-    const rows = [...state.rows].filter((r) => r.journey).sort((a, b) => a.journey.dispatch_date.localeCompare(b.journey.dispatch_date));
-    if (!rows.length) { $("#timeline").innerHTML = `<div class="empty">No dated consignments.</div>`; return; }
-    const day = 864e5, d = (s) => new Date(s + "T00:00:00").getTime(), today = new Date(new Date().toDateString()).getTime();
-    const t0 = Math.min(today, ...rows.map((r) => d(r.journey.dispatch_date))) - 2 * day, t1 = Math.max(today, ...rows.map((r) => d(r.journey.eta_date))) + 2 * day;
-    const W = 440, L = 78, R = 10, top = 24, rh = 30, H = top + rows.length * rh + 22, x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R);
-    let ticks = ""; for (let t = t0 - (t0 % (14 * day)) + 7 * day; t < t1; t += 14 * day) ticks += `<line x1="${x(t)}" x2="${x(t)}" y1="${top - 4}" y2="${H - 18}" stroke="#EEF0F3"/><text x="${x(t)}" y="${H - 4}" font-size="10" fill="#98A2B3" text-anchor="middle">${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</text>`;
-    const bars = rows.map((r, i) => {
-      const y = top + i * rh, a = x(d(r.journey.dispatch_date)), b = x(d(r.journey.eta_date)), c = BAND_COLOR[r.risk_band];
-      const moving = r.journey.status === "In transit", px = moving ? a + (b - a) * r.journey.progress : a;
-      return `<g class="tl-row" data-open="${esc(r.consignment_id)}"><text class="lab" x="0" y="${y + 13}" font-size="10.5" fill="#344054" font-family="JetBrains Mono, monospace">${esc(r.consignment_id)}</text>
-        <rect x="${a}" y="${y + 4}" width="${Math.max(4, b - a)}" height="12" rx="6" fill="${c}" opacity=".16"/>
-        <rect class="bar" x="${a}" y="${y + 4}" width="${Math.max(4, px - a)}" height="12" rx="6" fill="${c}" opacity=".85"><animate attributeName="width" from="0" to="${Math.max(4, px - a)}" dur=".9s" fill="freeze"/></rect>
-        <circle cx="${b}" cy="${y + 10}" r="3.5" fill="#fff" stroke="${c}" stroke-width="2"/>
-        ${moving ? `<circle cx="${px}" cy="${y + 10}" r="5" fill="${c}" stroke="#fff" stroke-width="2"><animate attributeName="r" values="5;6.5;5" dur="1.6s" repeatCount="indefinite"/></circle>` : ""}
-        <title>${esc(routeText(r))} · ${esc(statusLine(r))} · risk ${r.risk_score.toFixed(0)}</title></g>`;
-    }).join("");
-    const tx = x(today);
-    $("#timeline").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Consignment timeline">${ticks}
-      <line x1="${tx}" x2="${tx}" y1="${top - 12}" y2="${H - 18}" stroke="#0F4C81" stroke-width="1.5" stroke-dasharray="3 3"/><rect x="${tx - 20}" y="0" width="40" height="15" rx="7.5" fill="#0F4C81"/><text x="${tx}" y="11" font-size="9.5" fill="#fff" text-anchor="middle" font-weight="600">TODAY</text>${bars}</svg>
-      <div class="legend-inline" style="margin-top:8px"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span><span class="tag">filled = journey completed · ring = ETA</span></div>`;
-  }
+  $("#globe-list").addEventListener("click", (e) => { if (e.target.closest("[data-open]")) return; const it = e.target.closest("[data-focus]"); if (it) focusConsignment(it.dataset.focus); });
+  const flyHot = (id) => { const h = G.data?.hot.find((x) => x.id === id); if (h) flyTo(h.lat, h.lng, 0.95); };
+  $("#hotspot-list").addEventListener("click", (e) => { const it = e.target.closest("[data-hot]"); if (it) flyHot(it.dataset.hot); });
+  $("#globe-panel").addEventListener("keydown", (e) => { if (e.key !== "Enter" && e.key !== " ") return; const f = e.target.closest("[data-focus]"), h = e.target.closest("[data-hot]"); if (e.target.closest("button")) return; if (f) { e.preventDefault(); focusConsignment(f.dataset.focus); } else if (h) { e.preventDefault(); flyHot(h.dataset.hot); } });
 
   function sparkline(vals, band) {
     if (!vals?.length) return `<span class="tag">no history</span>`;

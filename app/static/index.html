@@ -61,11 +61,16 @@
             <button class="gc-btn" id="gc-in" title="Zoom in">+</button>
             <button class="gc-btn" id="gc-out" title="Zoom out">−</button>
           </div>
-          <aside class="globe-panel" id="globe-panel">
-            <div class="gp-head"><span>Consignments</span><div class="seg seg-sm" id="globe-filter"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elev.</button><button data-band="low">Low</button></div></div>
-            <div class="gp-list" id="globe-list"></div>
-            <div class="gp-head gp-sub"><span>Risk hotspots</span><span class="tag" id="hotspot-count"></span></div>
-            <div class="gp-list gp-hot" id="hotspot-list"></div>
+          <aside class="globe-panel" id="globe-panel" aria-label="Consignments and hotspots on the map">
+            <section class="gp-sec">
+              <div class="gp-head"><span>Consignments</span><span class="tag" id="gp-count"></span></div>
+              <div class="seg seg-sm seg-full" id="globe-filter" role="group" aria-label="Filter routes by risk"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elevated</button><button data-band="low">Low</button></div>
+              <div class="gp-list" id="globe-list"></div>
+            </section>
+            <section class="gp-sec">
+              <div class="gp-head"><span>Risk hotspots</span><span class="tag" id="hotspot-count"></span></div>
+              <div class="gp-list gp-hot" id="hotspot-list"></div>
+            </section>
           </aside>
           <div class="globe-legend">
             <div class="gl-row"><span class="gl-line high"></span>High<span class="gl-line elevated"></span>Elevated<span class="gl-line low"></span>Low</div>
@@ -81,21 +86,6 @@
           <div class="globe-hint" id="globe-hint">Scroll to zoom: ship, flight and truck icons appear up close · hover places for details</div>
           <div class="globe-tip" id="globe-tip" role="tooltip"></div>
           <div class="globe-fallback" id="globe-fallback" hidden></div>
-        </div>
-      </div>
-
-      <div class="grid-3">
-        <div class="card diagram">
-          <div class="card-head"><div><h2>Where the risk comes from</h2><p class="muted">Average level of each risk parameter across the book, weighted by cargo value, against the riskiest consignment.</p></div></div>
-          <div class="chart-wrap radar-wrap"><canvas id="chart-radar"></canvas></div>
-        </div>
-        <div class="card diagram">
-          <div class="card-head"><div><h2>Cargo value by risk</h2><p class="muted">How much of the value in the book sits in each risk band.</p></div></div>
-          <div class="donut-wrap"><div class="donut-canvas"><canvas id="chart-donut"></canvas><div class="donut-center" id="donut-center"></div></div><div class="donut-legend" id="donut-legend"></div></div>
-        </div>
-        <div class="card diagram">
-          <div class="card-head"><div><h2>Departure &amp; arrival timeline</h2><p class="muted">Each consignment from dispatch to ETA, coloured by risk. The line marks today.</p></div></div>
-          <div id="timeline" class="timeline"></div>
         </div>
       </div>
 
