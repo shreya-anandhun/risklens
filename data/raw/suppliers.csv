@@ -1,0 +1,49 @@
+supplier_id,supplier_name,region,country,product_category,lead_time_days,lead_time_std_days,average_cost_per_unit,annual_volume_units,total_deliveries,on_time_deliveries,single_source,contract_type
+SUP_001,TechParts Asia,East Asia,China,Electronics,18,1.1,247.18,50534,117,94,0,annual
+SUP_002,QuickShip Ltd,South Asia,India,Packaging,39,15.0,29.27,7317,128,115,0,annual
+SUP_003,GlobalLogistics Inc,Southeast Asia,Vietnam,Machinery,68,14.6,298.43,79772,59,56,1,annual
+SUP_004,Meridian Chemicals,Middle East,Saudi Arabia,Chemicals,26,2.0,45.27,70326,102,86,0,spot
+SUP_005,Nordvik Components,Europe,Sweden,Electronics,73,11.3,92.68,44521,59,53,0,annual
+SUP_006,Sahara Minerals,Africa,Morocco,Raw Materials,61,7.3,51.94,31091,119,83,1,spot
+SUP_007,Pacific Semis,East Asia,Taiwan,Electronics,75,17.0,50.45,11508,68,56,0,annual
+SUP_008,Ganges Textiles,South Asia,Bangladesh,Raw Materials,18,2.0,9.82,45169,89,75,1,multi-year
+SUP_009,Rhine Precision,Europe,Germany,Machinery,39,2.3,462.99,13630,130,116,1,annual
+SUP_010,Gulf Polymers,Middle East,UAE,Chemicals,45,14.7,23.87,72226,89,57,0,spot
+SUP_011,Mekong Packaging,Southeast Asia,Thailand,Packaging,25,4.6,19.77,30180,89,76,0,annual
+SUP_012,Andes Copper,Latin America,Chile,Raw Materials,13,1.6,33.64,93844,84,62,0,spot
+SUP_013,Great Lakes Steel,North America,USA,Raw Materials,38,10.5,47.28,32747,122,94,0,spot
+SUP_014,Lagos Agro Inputs,Africa,Nigeria,Chemicals,19,0.8,41.88,81016,86,62,0,spot
+SUP_015,Kansai Robotics,East Asia,Japan,Machinery,51,9.7,261.99,88743,44,36,0,spot
+SUP_016,Iberia Circuits,Europe,Spain,Electronics,18,0.7,397.61,16175,129,121,0,annual
+SUP_017,Bosphorus Metals,Middle East,Turkey,Raw Materials,44,9.4,15.99,86567,54,45,0,annual
+SUP_018,Hanoi Plastics,Southeast Asia,Vietnam,Packaging,71,11.2,28.12,30793,137,101,1,annual
+SUP_019,Pune Autoparts,South Asia,India,Machinery,22,1.6,418.21,84850,103,96,1,multi-year
+SUP_020,Shenzhen Boards,East Asia,China,Electronics,13,1.6,439.05,86906,133,128,0,spot
+SUP_021,Baltic Chemicals,Europe,Poland,Chemicals,31,0.9,30.11,91611,63,36,1,spot
+SUP_022,Cape Ferro,Africa,South Africa,Raw Materials,80,14.5,22.49,18289,59,39,0,multi-year
+SUP_023,Monterrey Castings,Latin America,Mexico,Machinery,70,6.8,319.03,89461,125,119,0,spot
+SUP_024,Ohio Valley Plastics,North America,USA,Packaging,19,3.4,8.36,97977,63,51,0,annual
+SUP_025,Seoul Displays,East Asia,South Korea,Electronics,83,2.5,209.06,51000,125,97,1,annual
+SUP_026,Karachi Cotton,South Asia,Pakistan,Raw Materials,39,2.0,49.24,48610,125,87,0,annual
+SUP_027,Jakarta Resins,Southeast Asia,Indonesia,Chemicals,17,4.1,23.87,52799,68,51,1,multi-year
+SUP_028,Doha Petrochem,Middle East,Qatar,Chemicals,81,8.3,32.99,94656,133,121,0,annual
+SUP_029,Lyon Actuators,Europe,France,Machinery,47,8.9,153.33,49331,86,48,0,annual
+SUP_030,Nairobi Agrichem,Africa,Kenya,Chemicals,60,15.4,113.29,27782,103,83,0,annual
+SUP_031,Sao Paulo Sensors,Latin America,Brazil,Electronics,21,2.1,94.5,27825,112,82,0,spot
+SUP_032,Ontario Fasteners,North America,Canada,Machinery,74,26.2,469.01,82714,112,98,0,spot
+SUP_033,Penang Semis,Southeast Asia,Malaysia,Electronics,40,6.5,150.78,45875,139,114,0,spot
+SUP_034,Chennai Forgings,South Asia,India,Machinery,22,3.4,141.75,6114,55,51,0,multi-year
+SUP_035,Osaka Ceramics,East Asia,Japan,Raw Materials,20,6.2,13.54,81519,117,96,1,spot
+SUP_036,Milano Packaging,Europe,Italy,Packaging,66,26.2,7.29,62014,47,46,1,multi-year
+SUP_037,Accra Cocoa Inputs,Africa,Ghana,Raw Materials,55,11.5,40.71,44825,85,83,1,annual
+SUP_038,Lima Minerals,Latin America,Peru,Raw Materials,81,9.8,27.65,28529,134,114,0,spot
+SUP_039,Texas Petro Films,North America,USA,Packaging,82,7.0,21.2,59127,98,84,1,annual
+SUP_040,Manila Assemblies,Southeast Asia,Philippines,Electronics,60,18.1,279.33,51761,136,115,0,annual
+SUP_041,Dhaka Cartons,South Asia,Bangladesh,Packaging,50,11.6,5.37,44230,123,92,0,annual
+SUP_042,Muscat Alloys,Middle East,Oman,Raw Materials,73,30.8,43.8,95884,90,86,0,annual
+SUP_043,Prague Gearworks,Europe,Czechia,Machinery,36,8.1,496.32,65443,41,39,0,annual
+SUP_044,Casablanca Phosphates,Africa,Morocco,Chemicals,22,7.2,45.67,15916,131,93,0,annual
+SUP_045,Bogota Films,Latin America,Colombia,Packaging,65,9.2,14.17,74623,89,76,1,multi-year
+SUP_046,Taipei Optics,East Asia,Taiwan,Electronics,51,7.0,284.45,91045,83,78,1,annual
+SUP_047,Riyadh Polymers,Middle East,Saudi Arabia,Chemicals,85,12.0,77.84,57085,131,99,1,annual
+SUP_048,Rotterdam Additives,Europe,Netherlands,Chemicals,12,1.6,106.01,76381,138,132,1,annual
