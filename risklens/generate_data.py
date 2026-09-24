@@ -11,6 +11,8 @@ real (but noisy) pattern to learn — the way real supply-chain data behaves.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -224,9 +226,86 @@ def generate(seed: int = SEED) -> dict[str, pd.DataFrame]:
     }
 
 
+# ---------------------------------------------------------------------------
+# The client's active consignments. Each rides on one of the historical lanes
+# above (supplier_id), so its external signals and disruption history come
+# from that lane. Cargo value is set by target value / unit cost.
+# ---------------------------------------------------------------------------
+CONSIGNMENTS = [
+    # id, lane, cargo, mode, carrier, origin (port, country, region), destination (port, country, region), dispatch, eta, target value
+    ("CN-26-0911", "SUP_041", "Corrugated export cartons", "Sea", "BlueWake Shipping",
+     ("Chittagong", "Bangladesh", "South Asia"), ("Felixstowe", "United Kingdom", "Europe"), "2026-09-29", "2026-11-02", 420_000),
+    ("CN-26-0914", "SUP_030", "Crop-protection chemicals", "Sea", "Gulfstar Lines",
+     ("Mombasa", "Kenya", "Africa"), ("Jebel Ali", "United Arab Emirates", "Middle East"), "2026-09-30", "2026-10-21", 1_100_000),
+    ("CN-26-0917", "SUP_042", "Aluminium alloy ingots", "Sea", "Gulfstar Lines",
+     ("Sohar", "Oman", "Middle East"), ("Chennai", "India", "South Asia"), "2026-10-01", "2026-10-18", 2_400_000),
+    ("CN-26-0920", "SUP_007", "Power semiconductors", "Sea", "Pacific Arc Lines",
+     ("Kaohsiung", "Taiwan", "East Asia"), ("Los Angeles", "United States", "North America"), "2026-09-10", "2026-10-09", 3_800_000),
+    ("CN-26-0922", "SUP_038", "Zinc concentrate", "Sea", "TransAndes Freight",
+     ("Callao", "Peru", "Latin America"), ("Rotterdam", "Netherlands", "Europe"), "2026-10-02", "2026-11-12", 1_600_000),
+    ("CN-26-0925", "SUP_009", "CNC machine spindles", "Sea", "Atlantic Crest Lines",
+     ("Hamburg", "Germany", "Europe"), ("Newark", "United States", "North America"), "2026-09-14", "2026-10-05", 2_100_000),
+    ("CN-26-0928", "SUP_024", "PET packaging film", "Road", "Interstate Haulage Co.",
+     ("Columbus", "United States", "North America"), ("Monterrey", "Mexico", "Latin America"), "2026-09-29", "2026-10-05", 310_000),
+]
+
+# Alternative plans per consignment. `changes` override the consignment's
+# inputs: a number sets the value; "*x" multiplies, "+x"/"-x" adds, "^x"
+# raises to at least x. Text fields (carrier, mode, route) are replaced.
+ALTERNATIVES = [
+    ("CN-26-0911", "Switch to Coastline Carriers", "Carrier with a 93% on-time record on the Bay of Bengal loop.",
+     {"carrier": "Coastline Carriers", "reliability_score": "^0.93", "lead_time_std_days": "*0.6"}, 2.5, 0),
+    ("CN-26-0911", "Tranship via Colombo", "Leave Chittagong on the southern feeder and avoid the storm window in the northern Bay.",
+     {"route_via": "Colombo", "weather_risk_index": "*0.5", "port_congestion_index": "+8"}, 1.8, 4),
+    ("CN-26-0911", "Air freight from Dhaka", "Fly the cartons from Dhaka (DAC) to London Stansted.",
+     {"mode": "Air", "carrier": "SkyBridge Air Cargo", "lead_time_days": 10, "lead_time_std_days": 1.5, "weather_risk_index": "*0.6"}, 22.0, -20),
+    ("CN-26-0914", "Load at Dar es Salaam", "Move loading south to Dar es Salaam, away from the disrupted Mombasa corridor.",
+     {"origin_port": "Dar es Salaam", "origin_country": "Tanzania", "geopolitical_risk_index": "*0.65", "port_congestion_index": "*0.8"}, 2.0, 3),
+    ("CN-26-0914", "Hold at origin for 10 days", "Keep cargo bonded at Mombasa until the corridor stabilises.",
+     {"days_since_last_disruption": "+10", "geopolitical_risk_index": "*0.85"}, 0.6, 10),
+    ("CN-26-0917", "Load at Salalah", "Truck to Salalah and sail direct, avoiding the Strait of Hormuz approaches.",
+     {"origin_port": "Salalah", "route_via": "Arabian Sea direct", "geopolitical_risk_index": "*0.6", "port_congestion_index": "*0.7"}, 1.5, 2),
+    ("CN-26-0917", "Switch to Crescent Marine", "Premium carrier with a 97% on-time record on Gulf–India routes.",
+     {"carrier": "Crescent Marine", "reliability_score": "^0.97", "lead_time_std_days": "*0.7"}, 1.2, 0),
+    ("CN-26-0920", "Divert to Oakland", "Change the discharge port to Oakland while the vessel is still at sea, then truck south.",
+     {"destination_port": "Oakland", "port_congestion_index": "*0.6", "lead_time_std_days": "*0.8"}, 2.2, 1),
+    ("CN-26-0920", "Priority berth at Long Beach", "Discharge at Long Beach with a pre-booked priority berth.",
+     {"destination_port": "Long Beach", "port_congestion_index": "*0.5", "lead_time_std_days": "*0.5"}, 1.2, -2),
+    ("CN-26-0922", "Switch to Andes Line", "Carrier with a 92% on-time record Callao–Europe, discharging at Antwerp.",
+     {"carrier": "Andes Line", "destination_port": "Antwerp", "destination_country": "Belgium", "reliability_score": "^0.92", "port_congestion_index": "*0.75"}, 1.5, 2),
+    ("CN-26-0922", "Delay loading by one week", "Let Callao clear the backlog from this week's disruption before loading.",
+     {"days_since_last_disruption": "+7", "port_congestion_index": "*0.8"}, 0.4, 7),
+    ("CN-26-0925", "Discharge at Philadelphia", "Switch the discharge port to Philadelphia, which has shorter berth queues this month.",
+     {"destination_port": "Philadelphia", "port_congestion_index": "*0.8"}, 0.8, 1),
+    ("CN-26-0925", "Pre-book inland trucking at Newark", "Reserve trucks now so the spindles leave the terminal on the day they land.",
+     {"lead_time_std_days": "*0.6"}, 0.4, -1),
+    ("CN-26-0928", "Rail intermodal via Laredo", "Cross-border rail from Columbus via Laredo. Cheaper, slightly slower.",
+     {"mode": "Rail", "carrier": "Borderline Intermodal", "route_via": "Laredo", "lead_time_std_days": "*0.7"}, -3.0, 2),
+    ("CN-26-0928", "Team drivers, non-stop", "Two-driver truck with no overnight stop.",
+     {"carrier": "Interstate Haulage Co. (team)", "lead_time_std_days": "*0.6", "reliability_score": "^0.9"}, 4.0, -1),
+]
+
+
+def consignment_frames(suppliers: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    cost = suppliers.set_index("supplier_id")["average_cost_per_unit"]
+    rows = []
+    for cid, sid, cargo, mode, carrier, org, dst, dep, eta, value in CONSIGNMENTS:
+        unit = float(cost[sid])
+        rows.append({
+            "consignment_id": cid, "supplier_id": sid, "cargo": cargo, "mode": mode, "carrier": carrier,
+            "origin_port": org[0], "origin_country": org[1], "region": org[2],
+            "destination_port": dst[0], "destination_country": dst[1], "destination_region": dst[2],
+            "dispatch_date": dep, "eta_date": eta, "units": int(max(1, round(value / unit))),
+        })
+    alts = [{"consignment_id": c, "title": t, "description": d, "changes": json.dumps(ch),
+             "cost_delta_pct": cp, "eta_delta_days": e} for c, t, d, ch, cp, e in ALTERNATIVES]
+    return {"consignments": pd.DataFrame(rows), "consignment_alternatives": pd.DataFrame(alts)}
+
+
 def main():
     DATA_RAW.mkdir(parents=True, exist_ok=True)
     frames = generate()
+    frames.update(consignment_frames(frames["suppliers"]))
     for name, df in frames.items():
         path = DATA_RAW / f"{name}.csv"
         df.to_csv(path, index=False)

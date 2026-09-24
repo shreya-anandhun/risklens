@@ -16,6 +16,14 @@ META_PATH = MODELS / "model_meta.json"
 # this many days. This is the "lead time" the system gives planners.
 HORIZON_DAYS = 7
 
+# The client this portal is deployed for. All data is dummy data.
+COMPANY = {
+    "name": "Northwind Logistics",
+    "short": "NW",
+    "team": "Global Operations Desk",
+    "currency": "USD",
+}
+
 # Reference ranges used to normalise raw inputs to a 0-1 risk scale.
 LEAD_TIME_MIN, LEAD_TIME_MAX = 10, 90          # days
 LEAD_TIME_CV_CAP = 0.50                        # std/mean above this = max risk

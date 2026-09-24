@@ -1,81 +1,101 @@
-# RiskLens — Supply Chain Risk Intelligence
+# RiskLens: Consignment Risk Intelligence
 
-Predicts which suppliers are likely to be disrupted in the next 7 days, explains
-why parameter by parameter, and recommends costed mitigations. Built for
-Datathon 2K26 (BDA & CC track). All data is synthetic.
+**RiskLens predicts which of a logistics company's consignments are likely to be disrupted in the next 7 days, explains why, and recommends what to do about it.**
+For each consignment it gives a risk score, shows how every risk parameter moved that score, lists costed mitigations,
+and compares alternative routes, carriers and timings, each re-scored by the model.
+
+The portal is the client's view. This demo is set up for one fictional company, **Northwind Logistics**, managing
+seven consignments across seven regions. All data is dummy data, built for Datathon 2K26 (BDA & CC track).
 
 ```
-data/raw  ──►  features  ──►  XGBoost  ──►  rules engine  ──►  web portal
-3 CSVs         7 factors      P(disruption   IF-THEN with      FastAPI + JS
-(dummy)        (0-1 each)     in 7 days)     cost / benefit    light theme
+data/raw  ──►  features  ──►  XGBoost  ──►  rules + alternatives  ──►  client portal
+dummy CSVs     7 factors      P(disruption    costed mitigations and       FastAPI + JS
+               (0–1 each)     in 7 days)      re-scored route options      light theme
 ```
+
+## The demo consignments
+
+| ID | Cargo | From | To | Mode | Status |
+|---|---|---|---|---|---|
+| CN-26-0911 | Corrugated export cartons | Chittagong, Bangladesh | Felixstowe, UK | Sea | Scheduled |
+| CN-26-0914 | Crop-protection chemicals | Mombasa, Kenya | Jebel Ali, UAE | Sea | Scheduled |
+| CN-26-0917 | Aluminium alloy ingots | Sohar, Oman | Chennai, India | Sea | Scheduled |
+| CN-26-0920 | Power semiconductors | Kaohsiung, Taiwan | Los Angeles, USA | Sea | In transit |
+| CN-26-0922 | Zinc concentrate | Callao, Peru | Rotterdam, Netherlands | Sea | Scheduled |
+| CN-26-0925 | CNC machine spindles | Hamburg, Germany | Newark, USA | Sea | In transit |
+| CN-26-0928 | PET packaging film | Columbus, USA | Monterrey, Mexico | Road | Scheduled |
+
+Carrier names are made up. Status is worked out from today's date against the dispatch date and ETA.
 
 ## Quick start
 
 ```bash
-./run.sh            # creates .venv, installs deps, builds data + model, serves on :8000
+./run.sh            # creates .venv, installs deps, builds data + model if missing, serves on :8000
 ```
 
-Open http://localhost:8000. On macOS, XGBoost needs the OpenMP runtime:
-`brew install libomp`.
+Open http://localhost:8000. On macOS, XGBoost needs the OpenMP runtime: `brew install libomp`.
 
-Rebuild data and model from scratch at any time:
+Rebuild the data and model from scratch, or run the tests:
 
 ```bash
 .venv/bin/python -m risklens.pipeline
 ```
 
-Run the tests:
-
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-## What the portal does
+## What the portal shows
 
 | Page | What you can do |
 |---|---|
-| **Overview** | Portfolio KPIs (% of spend at risk, high-risk count, expected 7-day loss), back-test of predicted risk vs. actual disruptions, supplier × parameter heatmap, priority actions ranked by net benefit. |
-| **Suppliers** | Editable portfolio. Search, filter by band, sort. Click a row to open the inspector: score dial, parameter scorecard with SHAP contributions, costed mitigations, risk history, and an edit form that re-scores live. Save persists to `data/portal/suppliers.json`; Delete removes; Reset restores the seed. |
-| **Analyze** | Score a single supplier from a form (updates as you type; can be saved to the portfolio), or upload a CSV batch. Row-level validation errors are reported by line and field; valid rows are still scored. Download the template, download results, or add the batch to the portfolio. |
-| **Methodology** | Model card with metrics, feature importance, exact normalisation formulas, rule catalogue, risk bands, and data lineage. |
+| **Overview** | KPIs for the consignment book: consignments at risk and cargo value at risk, expected disruption loss, and savings available from alternatives. The consignment board shows each route, journey progress, 30-day lane risk trend, risk score and best alternative. Below it are a risk-factor heatmap, recommended actions ranked by net benefit, and past disruptions on the company's own lanes. |
+| **Consignments** | Search, filter and sort the book. Click a consignment to open its detail panel: route and dates, risk score, **alternatives table with an Apply button**, parameter scorecard with a plain-English "How is this score calculated?" section, mitigations, lane risk history, and an edit form that re-scores live. |
+| **What-if analysis** | Assess a planned consignment before booking it, with alternatives and mitigations, then add it to the book. Or upload a CSV batch; problems are reported by line and field and valid rows are still scored. |
 
-## Phase map (matches the build roadmap)
+**Reset demo data** in the sidebar restores the seven original consignments after a demo.
+
+## How it works
 
 | Phase | Where | Notes |
 |---|---|---|
-| 1 Data foundation | `risklens/generate_data.py` → `data/raw/*.csv` | 48 suppliers × 115 days. `suppliers.csv`, `external_signals.csv`, `disruptions.csv`, plus the joined `supply_chain_combined.csv`. Disruptions are drawn from a latent-risk process so there is a real pattern to learn. |
-| 2 Feature engineering | `risklens/features.py` → `data/processed/supply_chain_features.csv` | Seven 0–1 risk factors: reliability, lead-time exposure, lead-time variability, geopolitical (blended with port congestion), weather, commodity price volatility (30-day swing), disruption recency (`exp(-days/30)`). Same functions serve the portal so training and inference agree. Target = disruption within the next 7 days, using only past information. |
-| 3 ML model | `risklens/train.py` → `models/risk_model.json`, `model_meta.json` | XGBoost, 300 trees, depth 4, monotonic constraints on all factors. Time-based 80/20 split. Test AUC ≈ 0.80, recall ≈ 0.71 at the F1-optimal threshold. |
-| 4 Rules engine | `risklens/rules.py` | Eight IF-THEN rules (diversify region, safety stock, backup supplier, renegotiate, forward contract, schedule buffer, post-incident review, second source) with cost scaled to annual spend, timeline, expected risk reduction and net benefit. |
-| 5 Portal | `app/main.py`, `app/static/` | FastAPI JSON API and a hand-built single-page UI (no framework, Chart.js vendored). |
-| 6 Integration & tests | `tests/` | Feature invariants, rule logic, API contract, CSV edge cases (bad values, missing columns, empty file, wrong type, aliases). |
+| 1 Data | `risklens/generate_data.py` → `data/raw/` | `consignments.csv` (the 7 consignments with from/to, dates, carrier, units) and `consignment_alternatives.csv` (2–3 options each). Historical training data: `suppliers.csv` (48 lanes), `external_signals.csv` (daily weather, geopolitical, port congestion and commodity prices), and `disruptions.csv`. Each consignment rides on one historical lane, which supplies its signals and history. |
+| 2 Features | `risklens/features.py` | Seven 0–1 risk factors: carrier reliability, lead-time exposure, lead-time variability, geopolitical risk blended with port congestion, weather, fuel and commodity price volatility, and disruption recency. The portal uses the same functions as training. |
+| 3 Model | `risklens/train.py` → `models/` | XGBoost with monotonic constraints, so a worse input never lowers the score. Target is disruption within 7 days. Time-based split, test AUC ≈ 0.80. |
+| 4 Rules & alternatives | `risklens/rules.py`, `risklens/predictor.py` | Eight logistics mitigations (reroute, buffer stock, reschedule sailing, switch carrier, lock freight rate, schedule buffer, daily tracking, split consignment), costed as a share of cargo value. Each alternative's changes are applied to the consignment and the new version is re-scored by the model. Net benefit = expected loss avoided − extra cost. |
+| 5 Portal | `app/main.py`, `app/static/` | FastAPI JSON API and a hand-built single-page UI. Chart.js is vendored locally. |
+| 6 Tests | `tests/` | Feature invariants, rules, API contract, alternatives and apply, CSV edge cases. |
 
-## CSV format for batch scoring
+**Cost model.** A disruption is assumed to delay a consignment by about 0.3 × lead time + 5 days. Each delay day costs 1.2% of cargo value, on top of a fixed 4% handling impact. Expected loss is the model's probability multiplied by that cost.
 
-Required: `supplier_name, lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level`
-Optional: `region, product_category, lead_time_std_days, port_congestion_index, weather_risk_index, price_swing_pct, days_since_last_disruption, single_source, average_cost_per_unit, annual_volume_units`
+## CSV format for batch checks
 
-Column names are matched case-insensitively with common aliases (`Lead Time (days)`, `OTD`, `Geo Risk`…). Reliability may be given as 0–1 or as a percentage. Download a template from the Analyze page or `GET /api/template.csv`.
+Required: an ID (`consignment_id`, or `supplier_name`), `lead_time_days`, `reliability_score`, `geopolitical_risk_index`, `weather_risk_level`.
+Useful optional columns: `cargo, mode, carrier, origin_port, origin_country, region, destination_port, destination_country, destination_region, dispatch_date, eta_date, units, average_cost_per_unit, lead_time_std_days, port_congestion_index, weather_risk_index, price_swing_pct, days_since_last_disruption, single_source`.
+
+Column names are matched loosely, so `From`, `To`, `Shipment ID`, `ETA` and `OTD` all work. Reliability can be 0–1 or a percentage. Get a template from the What-if page or `GET /api/template.csv`.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/meta` | model card, feature definitions, rules, bands |
-| GET | `/api/overview` | KPIs, scored portfolio, back-test timeline, top actions |
-| GET/POST | `/api/suppliers` | list scored portfolio / add supplier |
-| GET/PUT/DELETE | `/api/suppliers/{id}` | inspect (with history) / edit / remove |
-| POST | `/api/suppliers/reset` · `/api/suppliers/import` | restore seed / add validated batch |
-| POST | `/api/score` · `/api/score/csv` | score one record / a CSV upload |
-| GET | `/api/template.csv` · `/api/export.csv` | template / scored portfolio export |
+| GET | `/api/meta` | company, parameter definitions, risk bands |
+| GET | `/api/overview` | KPIs, scored consignments with trends, lane disruptions, top actions |
+| GET / POST | `/api/consignments` | list the scored book / add a consignment |
+| GET / PUT / DELETE | `/api/consignments/{id}` | detail with alternatives and history / edit / remove |
+| POST | `/api/consignments/{id}/apply/{alternative}` | apply an alternative to a consignment |
+| POST | `/api/consignments/reset` · `/api/consignments/import` | restore the demo book / add a validated batch |
+| POST | `/api/score` · `/api/score/csv` | what-if for one consignment / a CSV |
+| GET | `/api/template.csv` · `/api/export.csv` | template / export of the scored book |
 
 ## Project layout
 
 ```
 risklens/   config, generate_data, features, train, rules, predictor, validation, store, pipeline
 app/        main.py (FastAPI), static/ (index.html, styles.css, app.js, vendor/chart.umd.js)
-data/       raw/ processed/ portal/ (portal state, git-ignored)
+data/       raw/ processed/ portal/ (portal edits, git-ignored)
 models/     risk_model.json, model_meta.json
 tests/      pytest suite
 ```
+
+To demo a different company, change `COMPANY` in `risklens/config.py` and the `CONSIGNMENTS` and `ALTERNATIVES` lists in `risklens/generate_data.py`, then run the pipeline and press Reset demo data.

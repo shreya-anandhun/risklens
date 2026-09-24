@@ -15,7 +15,7 @@ def test_no_triggers_yields_maintain():
 def test_triggers_and_cost_benefit():
     out = recommend(_factors(geopolitical_risk=0.8, weather_risk=0.9), {"lead_time_days": 60, "single_source": 1}, 50.0, 2_000_000)
     ids = {r["id"] for r in out["recommendations"]}
-    assert {"geo_diversify", "weather_backup", "second_source"} <= ids
+    assert {"geo_reroute", "weather_window", "split_consignment"} <= ids
     for r in out["recommendations"]:
         assert r["cost_usd"] >= 0 and r["net_benefit_usd"] == r["benefit_usd"] - r["cost_usd"]
     assert out["residual_risk_score"] < 50.0

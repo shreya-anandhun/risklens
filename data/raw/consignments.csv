@@ -1,0 +1,8 @@
+consignment_id,supplier_id,cargo,mode,carrier,origin_port,origin_country,region,destination_port,destination_country,destination_region,dispatch_date,eta_date,units
+CN-26-0911,SUP_041,Corrugated export cartons,Sea,BlueWake Shipping,Chittagong,Bangladesh,South Asia,Felixstowe,United Kingdom,Europe,2026-09-29,2026-11-02,78212
+CN-26-0914,SUP_030,Crop-protection chemicals,Sea,Gulfstar Lines,Mombasa,Kenya,Africa,Jebel Ali,United Arab Emirates,Middle East,2026-09-30,2026-10-21,9710
+CN-26-0917,SUP_042,Aluminium alloy ingots,Sea,Gulfstar Lines,Sohar,Oman,Middle East,Chennai,India,South Asia,2026-10-01,2026-10-18,54795
+CN-26-0920,SUP_007,Power semiconductors,Sea,Pacific Arc Lines,Kaohsiung,Taiwan,East Asia,Los Angeles,United States,North America,2026-09-10,2026-10-09,75322
+CN-26-0922,SUP_038,Zinc concentrate,Sea,TransAndes Freight,Callao,Peru,Latin America,Rotterdam,Netherlands,Europe,2026-10-02,2026-11-12,57866
+CN-26-0925,SUP_009,CNC machine spindles,Sea,Atlantic Crest Lines,Hamburg,Germany,Europe,Newark,United States,North America,2026-09-14,2026-10-05,4536
+CN-26-0928,SUP_024,PET packaging film,Road,Interstate Haulage Co.,Columbus,United States,North America,Monterrey,Mexico,Latin America,2026-09-29,2026-10-05,37081

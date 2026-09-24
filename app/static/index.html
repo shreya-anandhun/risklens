@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RiskLens · Supply Chain Risk Intelligence</title>
+<title>RiskLens · Consignment Risk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles.css">
@@ -14,17 +14,18 @@
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#0F4C81"/><path d="M9 22 14 14 18 18 23 9" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <div><div class="brand-name">RiskLens</div><div class="brand-sub">Supply Chain Risk Intelligence</div></div>
+      <div><div class="brand-name">RiskLens</div><div class="brand-sub">Consignment risk intelligence</div></div>
     </div>
+    <div class="company" id="company"><span class="company-mark">··</span><div><div class="company-name">Loading…</div><div class="company-team"></div></div></div>
     <nav class="nav">
       <a href="#overview" data-view="overview" class="nav-item active"><span class="nav-ico">▦</span>Overview</a>
-      <a href="#suppliers" data-view="suppliers" class="nav-item"><span class="nav-ico">☷</span>Suppliers</a>
-      <a href="#analyze" data-view="analyze" class="nav-item"><span class="nav-ico">⌕</span>Analyze</a>
-      <a href="#methodology" data-view="methodology" class="nav-item"><span class="nav-ico">ƒ</span>Methodology</a>
+      <a href="#consignments" data-view="consignments" class="nav-item"><span class="nav-ico">☷</span>Consignments<span class="nav-count" id="nav-count"></span></a>
+      <a href="#whatif" data-view="whatif" class="nav-item"><span class="nav-ico">⌕</span>What-if analysis</a>
     </nav>
     <div class="sidebar-foot">
-      <div class="model-pill" id="model-pill"><span class="dot"></span><span>Loading model…</span></div>
+      <div class="model-pill" id="model-pill"><span class="dot"></span><span>Connecting…</span></div>
       <div class="sidebar-meta" id="sidebar-meta"></div>
+      <button class="link small" id="btn-reset" title="Restore the original demo consignments">Reset demo data</button>
     </div>
   </aside>
 
@@ -32,61 +33,57 @@
     <header class="topbar">
       <div>
         <h1 class="page-title" id="page-title">Overview</h1>
-        <div class="page-sub" id="page-sub">Portfolio-wide disruption risk, 7-day horizon</div>
+        <div class="page-sub" id="page-sub"></div>
       </div>
       <div class="topbar-actions">
-        <button class="btn btn-ghost" id="btn-reset" title="Restore the seeded supplier portfolio">Reset data</button>
         <a class="btn btn-secondary" href="/api/export.csv">Export CSV</a>
-        <button class="btn btn-primary" id="btn-new-supplier">+ New supplier</button>
+        <button class="btn btn-primary" id="btn-new">+ New consignment</button>
       </div>
     </header>
 
     <!-- OVERVIEW -->
     <section class="view active" id="view-overview">
       <div class="kpi-grid" id="kpi-grid"></div>
-      <div class="grid-2-1">
-        <div class="card">
-          <div class="card-head"><div><h2>Predicted risk vs. actual disruptions</h2><p class="muted">Back-test over the historical window: average 7-day disruption probability across the portfolio against disruptions that occurred.</p></div></div>
-          <div class="chart-wrap"><canvas id="chart-timeline"></canvas></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><div><h2>Risk distribution</h2><p class="muted">Suppliers by band</p></div></div>
-          <div id="band-bars"></div>
-          <div class="divider"></div>
-          <div class="card-head"><div><h2>Disruption causes</h2><p class="muted">Historical events by root cause</p></div></div>
-          <div id="reason-bars"></div>
-        </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Consignment board</h2><p class="muted">Every active consignment, its journey and its 7-day disruption risk. Click a row for details and alternatives.</p></div>
+          <div class="legend-inline"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span></div></div>
+        <div class="board-wrap"><div class="board" id="board"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Risk factor heatmap</h2><p class="muted">Each cell is one risk parameter scaled from 0 (safe) to 1 (riskiest). Hover a column name for its meaning.</p></div></div>
+        <div class="heatmap-wrap"><div id="heatmap"></div></div>
+        <div class="legend-scale"><span>0</span><span class="bar"></span><span>1 riskiest</span></div>
       </div>
       <div class="grid-1-1">
         <div class="card">
-          <div class="card-head"><div><h2>Risk heatmap</h2><p class="muted">Each cell is a normalised 0–1 risk factor. Rows sorted by model score.</p></div>
-            <div class="seg" id="heat-limit"><button data-n="12" class="active">Top 12</button><button data-n="24">Top 24</button><button data-n="999">All</button></div></div>
-          <div class="heatmap-wrap"><div id="heatmap"></div></div>
+          <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div></div>
+          <div id="top-actions" class="action-list"></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Priority actions</h2><p class="muted">Triggered mitigations ranked by net benefit (expected loss avoided minus cost).</p></div></div>
-          <div id="top-actions" class="action-list"></div>
+          <div class="card-head"><div><h2>What disrupts your lanes</h2><p class="muted" id="lane-dis-sub">Past disruptions on the lanes these consignments use, by cause.</p></div></div>
+          <div id="reason-bars"></div>
           <div class="divider"></div>
-          <div class="card-head"><div><h2>Recent disruptions</h2><p class="muted" id="catch-rate"></p></div></div>
-          <div id="recent-disruptions"></div>
+          <div class="card-head"><div><h2>Recent disruptions on your lanes</h2><p class="muted" id="catch-rate"></p></div></div>
+          <div id="recent-disruptions" class="table-wrap"></div>
         </div>
       </div>
     </section>
 
-    <!-- SUPPLIERS -->
-    <section class="view" id="view-suppliers">
+    <!-- CONSIGNMENTS -->
+    <section class="view" id="view-consignments">
       <div class="card">
         <div class="toolbar">
-          <input type="search" id="sup-search" class="input" placeholder="Search supplier, region, category…">
-          <div class="seg" id="sup-band-filter"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elevated</button><button data-band="low">Low</button></div>
-          <span class="muted" id="sup-count"></span>
+          <input type="search" id="c-search" class="input" placeholder="Search ID, cargo, port, carrier…">
+          <div class="seg" id="c-band-filter"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elevated</button><button data-band="low">Low</button></div>
+          <span class="muted" id="c-count"></span>
         </div>
         <div class="table-wrap">
-          <table class="table" id="sup-table">
+          <table class="table" id="c-table">
             <thead><tr>
-              <th data-sort="supplier_name">Supplier</th><th data-sort="region">Region</th><th data-sort="product_category">Category</th>
-              <th data-sort="annual_spend_usd" class="num">Annual spend</th><th data-sort="risk_score" class="num">Risk score</th>
-              <th data-sort="risk_band">Band</th><th>Top driver</th><th data-sort="expected_loss_usd" class="num">Expected loss</th><th class="num">Actions</th>
+              <th data-sort="consignment_id">Consignment</th><th data-sort="origin_port">Route</th>
+              <th data-sort="eta">Dispatch → ETA</th><th data-sort="cargo_value_usd" class="num">Cargo value</th>
+              <th data-sort="risk_score" class="num">Risk score</th><th data-sort="risk_band">Band</th><th>Main driver</th>
+              <th>Recommended alternative</th><th data-sort="expected_loss_usd" class="num">Expected loss</th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -94,85 +91,29 @@
       </div>
     </section>
 
-    <!-- ANALYZE -->
-    <section class="view" id="view-analyze">
+    <!-- WHAT-IF -->
+    <section class="view" id="view-whatif">
       <div class="grid-1-1 analyze-grid">
         <div class="card">
-          <div class="card-head"><div><h2>Score a supplier</h2><p class="muted">Enter current operating data and external signals. The score updates as you type.</p></div></div>
-          <form id="score-form" class="form-grid" autocomplete="off">
-            <label class="span-2">Supplier name<input name="supplier_name" class="input" value="New Supplier" required></label>
-            <label>Region<select name="region" class="input"></select></label>
-            <label>Category<select name="product_category" class="input"></select></label>
-            <div class="form-section span-2">Operational</div>
-            <label>Lead time (days) <span class="hint">10–90 typical</span><input name="lead_time_days" type="number" class="input" min="1" max="365" value="45"></label>
-            <label>Lead time std dev (days)<input name="lead_time_std_days" type="number" class="input" min="0" max="365" step="any" value="8"></label>
-            <label>On-time delivery rate <span class="hint">0–1</span><input name="reliability_score" type="number" class="input" min="0" max="1" step="any" value="0.88"></label>
-            <label>Single-sourced<select name="single_source" class="input"><option value="0">No</option><option value="1">Yes</option></select></label>
-            <label>Unit cost (USD)<input name="average_cost_per_unit" type="number" class="input" min="0" step="any" value="120"></label>
-            <label>Annual volume (units)<input name="annual_volume_units" type="number" class="input" min="0" value="25000"></label>
-            <div class="form-section span-2">External signals</div>
-            <label>Geopolitical risk index <span class="hint">0–100</span><input name="geopolitical_risk_index" type="number" class="input" min="0" max="100" step="any" value="40"></label>
-            <label>Port congestion index <span class="hint">0–100</span><input name="port_congestion_index" type="number" class="input" min="0" max="100" step="any" value="35"></label>
-            <label>Weather risk level<select name="weather_risk_level" class="input"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select></label>
-            <label>Commodity price swing, 30d <span class="hint">%</span><input name="price_swing_pct" type="number" class="input" min="0" max="100" step="any" value="6"></label>
-            <div class="form-section span-2">History</div>
-            <label>Days since last disruption <span class="hint">blank = none on record</span><input name="days_since_last_disruption" type="number" class="input" min="0" placeholder="none"></label>
-            <div class="span-2 form-actions"><button type="submit" class="btn btn-primary">Analyze risk</button><button type="button" class="btn btn-secondary" id="btn-save-form">Save to portfolio</button><span class="muted" id="form-status"></span></div>
-          </form>
+          <div class="card-head"><div><h2>Plan a consignment</h2><p class="muted">Enter a planned or hypothetical consignment. Risk, mitigations and alternatives update as you type.</p></div></div>
+          <form id="score-form" class="form-grid" autocomplete="off"></form>
         </div>
-        <div class="card" id="score-result"><div class="empty">Enter supplier data to see the risk assessment.</div></div>
+        <div class="card" id="score-result"><div class="empty">Enter consignment details to see the risk assessment.</div></div>
       </div>
-
       <div class="card">
-        <div class="card-head"><div><h2>Batch scoring from CSV</h2><p class="muted">Upload a supplier list. Rows with problems are reported by line and field; valid rows are still scored.</p></div>
+        <div class="card-head"><div><h2>Check a batch from CSV</h2><p class="muted">Upload a list of consignments. Rows with problems are reported by line and field; valid rows are still scored.</p></div>
           <div class="btn-row"><a class="btn btn-secondary" href="/api/template.csv">Download template</a></div></div>
-        <div class="dropzone" id="dropzone"><input type="file" id="csv-input" accept=".csv,text/csv" hidden><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button><div class="muted small">Required columns: supplier_name, lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level</div></div>
+        <div class="dropzone" id="dropzone"><input type="file" id="csv-input" accept=".csv,text/csv" hidden><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button><div class="muted small">Required: consignment_id (or supplier_name), lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level</div></div>
         <div id="csv-result"></div>
-      </div>
-    </section>
-
-    <!-- METHODOLOGY -->
-    <section class="view" id="view-methodology">
-      <div class="kpi-grid" id="model-kpis"></div>
-      <div class="grid-1-1">
-        <div class="card">
-          <div class="card-head"><div><h2>How a score is computed</h2><p class="muted">Every parameter is normalised to a 0–1 risk factor before the model sees it, so the scorecard and the model agree on direction.</p></div></div>
-          <ol class="steps" id="steps"></ol>
-        </div>
-        <div class="card">
-          <div class="card-head"><div><h2>Feature importance</h2><p class="muted">Share of total split gain in the trained XGBoost model.</p></div></div>
-          <div class="chart-wrap"><canvas id="chart-importance"></canvas></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><h2>Parameter definitions</h2><p class="muted">Exact formulas used in feature engineering and in the portal.</p></div></div>
-        <div class="table-wrap"><table class="table" id="feature-table"><thead><tr><th>Parameter</th><th>Source fields</th><th>Formula (→ 0–1)</th><th class="num">Scorecard weight</th><th>Interpretation</th></tr></thead><tbody></tbody></table></div>
-      </div>
-      <div class="grid-1-1">
-        <div class="card">
-          <div class="card-head"><div><h2>Mitigation rules</h2><p class="muted">Deterministic IF–THEN rules applied on top of the model output.</p></div></div>
-          <div class="table-wrap"><table class="table" id="rules-table"><thead><tr><th>Trigger</th><th>Action</th><th>Cost</th><th>Timeline</th><th class="num">Risk reduction</th></tr></thead><tbody></tbody></table></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><div><h2>Model card</h2></div></div>
-          <dl class="dl" id="model-card"></dl>
-          <div class="divider"></div>
-          <div class="card-head"><div><h2>Risk bands</h2></div></div>
-          <div id="band-legend"></div>
-          <div class="divider"></div>
-          <div class="card-head"><div><h2>Data lineage</h2><p class="muted">All data is synthetic, generated for this prototype.</p></div></div>
-          <dl class="dl" id="data-card"></dl>
-        </div>
       </div>
     </section>
   </main>
 </div>
 
-<!-- Supplier drawer -->
 <div class="drawer-backdrop" id="drawer-backdrop"></div>
 <aside class="drawer" id="drawer" aria-hidden="true">
   <div class="drawer-head">
-    <div><div class="eyebrow" id="drawer-eyebrow"></div><h2 id="drawer-title">Supplier</h2></div>
+    <div><div class="eyebrow" id="drawer-eyebrow"></div><h2 id="drawer-title">Consignment</h2><div class="muted" id="drawer-sub"></div></div>
     <button class="icon-btn" id="drawer-close" aria-label="Close">✕</button>
   </div>
   <div class="drawer-body" id="drawer-body"></div>
