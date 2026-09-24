@@ -119,3 +119,17 @@ def test_template_roundtrips_import_and_export(client):
     assert client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"] == 0
     e = client.get("/api/export.csv")
     assert e.status_code == 200 and e.text.startswith("consignment_id,") and "recommended_alternative" in e.text.splitlines()[0]
+
+
+def test_overview_geo_for_globe(client):
+    o = client.get("/api/overview").json()
+    geo = o["geo"]
+    ids = {r["consignment_id"] for r in o["consignments"]}
+    assert set(geo["routes"]) == ids and not geo["unmapped"]
+    for cid, g in geo["routes"].items():
+        assert len(g["points"]) >= 2 and g["origin"]["about"] and g["destination"]["about"]
+        assert all(-90 <= la <= 90 and -180 <= lo <= 180 for la, lo in g["points"])
+    assert geo["hotspots"] and all(set(h["lanes"]) <= ids for h in geo["hotspots"])
+    # an unknown port is reported instead of drawn
+    client.post("/api/consignments", json={**GOOD, "origin_port": "Atlantis"})
+    assert len(client.get("/api/overview").json()["geo"]["unmapped"]) == 1

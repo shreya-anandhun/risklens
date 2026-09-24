@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from risklens import store
+from risklens.geo import geo_payload
 from risklens.config import COMPANY, DATA_PROCESSED, DATA_RAW, FEATURE_KEYS, FEATURES, HORIZON_DAYS, RISK_BANDS
 from risklens.predictor import apply_changes, load_model, portfolio_summary, score_records
 from risklens.validation import OPTIONAL, REQUIRED, validate_dataframe, validate_record
@@ -100,6 +101,7 @@ def overview():
         "catch_rate": round(float(dis.flagged_in_advance.mean() * 100), 1) if len(dis) else None,
         "lane_disruptions": int(len(dis)),
         "reasons": dis.disruption_reason.value_counts().to_dict(), "top_actions": actions[:6],
+        "n_actions": len(actions), "geo": geo_payload(results),
     }
 
 

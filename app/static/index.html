@@ -20,6 +20,7 @@
     <nav class="nav">
       <a href="#overview" data-view="overview" class="nav-item active"><span class="nav-ico">▦</span>Overview</a>
       <a href="#consignments" data-view="consignments" class="nav-item"><span class="nav-ico">☷</span>Consignments<span class="nav-count" id="nav-count"></span></a>
+      <a href="#actions" data-view="actions" class="nav-item"><span class="nav-ico">✓</span>Recommended actions<span class="nav-count" id="nav-actions"></span></a>
       <a href="#whatif" data-view="whatif" class="nav-item"><span class="nav-ico">⌕</span>What-if analysis</a>
     </nav>
     <div class="sidebar-foot">
@@ -44,50 +45,80 @@
     <!-- OVERVIEW -->
     <section class="view active" id="view-overview">
       <div class="kpi-grid" id="kpi-grid"></div>
-      <div class="card">
-        <div class="card-head"><div><h2>Consignment board</h2><p class="muted">Every active consignment, its journey and its 7-day disruption risk. Click a row for details and alternatives.</p></div>
-          <div class="legend-inline"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span></div></div>
-        <div class="board-wrap"><div class="board" id="board"></div></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><h2>Risk factor heatmap</h2><p class="muted">Each cell is one risk parameter scaled from 0 (safe) to 1 (riskiest). Hover a column name for its meaning.</p></div></div>
-        <div class="heatmap-wrap"><div id="heatmap"></div></div>
-        <div class="legend-scale"><span>0</span><span class="bar"></span><span>1 riskiest</span></div>
-      </div>
-      <div class="grid-1-1">
-        <div class="card">
-          <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div></div>
-          <div id="top-actions" class="action-list"></div>
+
+      <div class="card globe-card">
+        <div class="globe-stage" id="globe-stage">
+          <div class="globe-grid" aria-hidden="true"></div>
+          <div id="globe" class="globe-canvas" aria-label="3D globe of consignment routes and risk hotspots"></div>
+          <div class="globe-head">
+            <div class="live"><span class="live-dot"></span>Live</div>
+            <h2>Global risk map</h2>
+            <p id="globe-sub">Routes, positions and risk hotspots for every consignment.</p>
+          </div>
+          <div class="globe-controls" role="toolbar" aria-label="Globe controls">
+            <button class="gc-btn active" id="gc-rotate" title="Auto-rotate" aria-pressed="true">⟳</button>
+            <button class="gc-btn" id="gc-reset" title="Reset view">⌖</button>
+            <button class="gc-btn" id="gc-in" title="Zoom in">+</button>
+            <button class="gc-btn" id="gc-out" title="Zoom out">−</button>
+          </div>
+          <aside class="globe-panel" id="globe-panel">
+            <div class="gp-head"><span>Consignments</span><div class="seg seg-sm" id="globe-filter"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elev.</button><button data-band="low">Low</button></div></div>
+            <div class="gp-list" id="globe-list"></div>
+            <div class="gp-head gp-sub"><span>Risk hotspots</span><span class="tag" id="hotspot-count"></span></div>
+            <div class="gp-list gp-hot" id="hotspot-list"></div>
+          </aside>
+          <div class="globe-legend">
+            <div class="gl-row"><span class="gl-line high"></span>High<span class="gl-line elevated"></span>Elevated<span class="gl-line low"></span>Low</div>
+            <div class="gl-row gl-icons">
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 20c2 1 4 1 6 0s4-1 6 0 4 1 6 0"/><path d="M4 17.5 3 13h18l-2 4.5"/><path d="M6 13V8h12v5"/><path d="M12 8V4"/></svg>Ship</span>
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>Air</span>
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/></svg>Road</span>
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-4 0-8 .5-8 4v9.5A3.5 3.5 0 0 0 7.5 19L6 20.5V21h12v-.5L16.5 19a3.5 3.5 0 0 0 3.5-3.5V6c0-3.5-4-4-8-4z"/><path d="M4 11h16"/><path d="M12 3v8"/></svg>Rail</span>
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/></svg>Destination</span>
+              <span class="gl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>Hotspot</span>
+            </div>
+          </div>
+          <div class="globe-hint" id="globe-hint">Scroll to zoom: ship, flight and truck icons appear up close · hover places for details</div>
+          <div class="globe-tip" id="globe-tip" role="tooltip"></div>
+          <div class="globe-fallback" id="globe-fallback" hidden></div>
         </div>
-        <div class="card">
-          <div class="card-head"><div><h2>What disrupts your lanes</h2><p class="muted" id="lane-dis-sub">Past disruptions on the lanes these consignments use, by cause.</p></div></div>
-          <div id="reason-bars"></div>
-          <div class="divider"></div>
-          <div class="card-head"><div><h2>Recent disruptions on your lanes</h2><p class="muted" id="catch-rate"></p></div></div>
-          <div id="recent-disruptions" class="table-wrap"></div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card diagram">
+          <div class="card-head"><div><h2>Where the risk comes from</h2><p class="muted">Average level of each risk parameter across the book, weighted by cargo value, against the riskiest consignment.</p></div></div>
+          <div class="chart-wrap radar-wrap"><canvas id="chart-radar"></canvas></div>
         </div>
+        <div class="card diagram">
+          <div class="card-head"><div><h2>Cargo value by risk</h2><p class="muted">How much of the value in the book sits in each risk band.</p></div></div>
+          <div class="donut-wrap"><div class="donut-canvas"><canvas id="chart-donut"></canvas><div class="donut-center" id="donut-center"></div></div><div class="donut-legend" id="donut-legend"></div></div>
+        </div>
+        <div class="card diagram">
+          <div class="card-head"><div><h2>Departure &amp; arrival timeline</h2><p class="muted">Each consignment from dispatch to ETA, coloured by risk. The line marks today.</p></div></div>
+          <div id="timeline" class="timeline"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div><h2>Recent disruptions on your lanes</h2><p class="muted" id="catch-rate"></p></div></div>
+        <div id="recent-disruptions" class="table-wrap"></div>
       </div>
     </section>
 
     <!-- CONSIGNMENTS -->
     <section class="view" id="view-consignments">
       <div class="card">
-        <div class="toolbar">
-          <input type="search" id="c-search" class="input" placeholder="Search ID, cargo, port, carrier…">
-          <div class="seg" id="c-band-filter"><button data-band="all" class="active">All</button><button data-band="high">High</button><button data-band="elevated">Elevated</button><button data-band="low">Low</button></div>
-          <span class="muted" id="c-count"></span>
-        </div>
-        <div class="table-wrap">
-          <table class="table" id="c-table">
-            <thead><tr>
-              <th data-sort="consignment_id">Consignment</th><th data-sort="origin_port">Route</th>
-              <th data-sort="eta">Dispatch → ETA</th><th data-sort="cargo_value_usd" class="num">Cargo value</th>
-              <th data-sort="risk_score" class="num">Risk score</th><th data-sort="risk_band">Band</th><th>Main driver</th>
-              <th>Recommended alternative</th><th data-sort="expected_loss_usd" class="num">Expected loss</th>
-            </tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
+        <div class="card-head"><div><h2>Consignment board</h2><p class="muted">Every active consignment, its journey and its 7-day disruption risk. Click a row for details and alternatives.</p></div>
+          <div class="legend-inline"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span></div></div>
+        <div class="board-wrap"><div class="board" id="board"></div></div>
+      </div>
+    </section>
+
+    <!-- ACTIONS -->
+    <section class="view" id="view-actions">
+      <div class="card">
+        <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div></div>
+        <div id="top-actions" class="action-list"></div>
       </div>
     </section>
 
@@ -121,6 +152,8 @@
 
 <div class="toast" id="toast"></div>
 <script src="/static/vendor/chart.umd.js"></script>
+<script src="/static/vendor/topojson-client.min.js"></script>
+<script src="/static/vendor/globe.gl.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

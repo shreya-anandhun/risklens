@@ -37,6 +37,7 @@
   const PAGES = {
     overview: ["Overview", () => { const s = state.overview?.summary; return s ? `${s.n} active consignments · ${s.in_transit} in transit, ${s.scheduled} scheduled · 7-day risk outlook` : ""; }],
     consignments: ["Consignments", () => "Your consignment book. Click a row to inspect risk, compare alternatives and edit details."],
+    actions: ["Recommended actions", () => "Mitigations across your consignments, ranked by net benefit."],
     whatif: ["What-if analysis", () => "Test a planned consignment or a batch before you book it."],
   };
   function show(view) {
@@ -45,10 +46,12 @@
     $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
     $("#page-title").textContent = PAGES[view][0]; $("#page-sub").textContent = PAGES[view][1]();
     window.scrollTo(0, 0);
-    if (view === "overview") renderOverview();
-    if (view === "consignments") renderTable();
+    if (view === "overview") { renderOverview(); globeResume(); } else globePause();
+    if (view === "consignments") renderBoard();
+    if (view === "actions") renderActions();
   }
   window.addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
+  const currentView = () => (PAGES[location.hash.slice(1)] ? location.hash.slice(1) : "overview");
 
   // ---------- data ----------
   async function loadAll() {
@@ -58,33 +61,324 @@
     $("#company").innerHTML = `<span class="company-mark">${esc(c.short)}</span><div><div class="company-name">${esc(c.name)}</div><div class="company-team">${esc(c.team)}</div></div>`;
     $("#model-pill").innerHTML = `<span class="dot"></span><span>Risk engine live</span>`;
     $("#sidebar-meta").innerHTML = `Signals refreshed daily<br>Model updated ${esc(new Date(meta.model.trained_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}`;
-    $("#nav-count").textContent = state.rows.length;
+    updateCounts();
   }
+  function updateCounts() { $("#nav-count").textContent = state.rows.length; $("#nav-actions").textContent = state.overview.top_actions.length; }
   async function refresh() {
-    state.overview = await api("/api/overview"); state.rows = state.overview.consignments; $("#nav-count").textContent = state.rows.length;
-    const v = location.hash.slice(1) || "overview"; if (v === "overview") renderOverview(); if (v === "consignments") renderTable();
-    $("#page-sub").textContent = PAGES[PAGES[v] ? v : "overview"][1]();
+    state.overview = await api("/api/overview"); state.rows = state.overview.consignments; updateCounts();
+    const v = currentView();
+    if (v === "overview") renderOverview(); else state.globeDirty = true;
+    if (v === "consignments") renderBoard();
+    if (v === "actions") renderActions();
+    $("#page-sub").textContent = PAGES[v][1]();
   }
 
   // ---------- overview ----------
+  function countUp(el, finalText) {
+    const m = finalText.match(/^([^0-9]*)([0-9]+(?:\.[0-9]+)?)(.*)$/);
+    if (!m || matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = finalText; return; }
+    const [, pre, num, post] = m, target = parseFloat(num), dec = (num.split(".")[1] || "").length, t0 = performance.now(), dur = 900;
+    const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = pre + (target * e).toFixed(dec) + post; if (k < 1) requestAnimationFrame(step); else el.textContent = finalText; };
+    requestAnimationFrame(step);
+  }
   function renderOverview() {
     const o = state.overview, s = o.summary;
     const kpis = [
-      ["Active consignments", s.n, `${fmtUSD(s.total_value_usd)} cargo value · ${s.in_transit} in transit · ${s.departing_7d} departing in 7 days`, ""],
+      ["Active consignments", `${s.n}`, `${fmtUSD(s.total_value_usd)} cargo value · ${s.in_transit} in transit · ${s.departing_7d} departing in 7 days`, ""],
       ["Consignments at risk", `${s.n_at_risk} of ${s.n}`, `${fmtUSD(s.value_at_risk_usd)} (${s.pct_value_at_risk}%) of cargo value is High or Elevated · ${s.bands.high} High`, s.bands.high ? "high" : s.n_at_risk ? "elevated" : "low"],
       ["Expected disruption loss", fmtUSD(s.expected_loss_usd), "Next 7 days: probability of disruption × estimated cost of the delay", ""],
       ["Savings from alternatives", fmtUSD(s.alternative_savings_usd), `${s.alternatives_available} consignment${s.alternatives_available === 1 ? " has" : "s have"} a better route, carrier or timing`, s.alternative_savings_usd > 0 ? "low" : ""],
     ];
-    $("#kpi-grid").innerHTML = kpis.map(([l, v, sub, c]) => `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value ${c}">${v}</div><div class="kpi-sub">${sub}</div></div>`).join("");
-    renderBoard();
-    renderHeatmap();
-    $("#top-actions").innerHTML = o.top_actions.length ? o.top_actions.map((a) => `<div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div><div class="a-sub">${esc(a.trigger)}</div></div><div class="a-meta">Net benefit<b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b>${esc(a.timeline)}</div></div>`).join("") : `<div class="empty">No actions needed. Every consignment is within tolerance.</div>`;
-    const reasons = Object.entries(o.reasons).sort((a, b) => b[1] - a[1]); const rmax = reasons[0]?.[1] || 1;
-    $("#lane-dis-sub").textContent = `${o.lane_disruptions} past disruptions on the lanes these consignments use, by cause.`;
-    $("#reason-bars").innerHTML = reasons.map(([k, v]) => `<div class="hbar"><span title="${esc(k)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(k)}</span><span class="track"><span class="fill" style="width:${(v / rmax) * 100}%"></span></span><span class="n">${v}</span></div>`).join("") || `<div class="empty">No past disruptions on these lanes.</div>`;
+    $("#kpi-grid").innerHTML = kpis.map(([l, v, sub, c]) => `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value ${c}" data-final="${esc(v)}">${esc(v)}</div><div class="kpi-sub">${sub}</div></div>`).join("");
+    $$("#kpi-grid .kpi-value").forEach((el) => countUp(el, el.dataset.final));
     $("#catch-rate").textContent = o.catch_rate == null ? "" : `RiskLens rated ${o.catch_rate}% of these as Elevated or High in the 7 days before they happened.`;
     $("#recent-disruptions").innerHTML = `<table class="table"><thead><tr><th>Date</th><th>Lane</th><th>Cause</th><th class="num">Cost</th><th>Warned</th></tr></thead><tbody>${o.recent_disruptions.map((d) => `<tr><td class="mono">${fmtDate(d.date)}</td><td>${esc(d.lane)}<div class="sub mono">${esc(d.consignment_id)}</div></td><td>${esc(d.disruption_reason)}</td><td class="num">${fmtUSD(d.recovery_cost_usd)}</td><td>${d.flagged_in_advance ? '<span class="chip low">yes</span>' : '<span class="chip high">missed</span>'}</td></tr>`).join("")}</tbody></table>`;
+    renderGlobe();
+    renderRadar(); renderDonut(); renderTimeline();
   }
+
+  // ---------- actions page ----------
+  function renderActions() {
+    const o = state.overview;
+    $("#top-actions").innerHTML = o.top_actions.length ? o.top_actions.map((a) => `<div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div><div class="a-sub">${esc(a.trigger)}</div></div><div class="a-meta">Net benefit<b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b>${esc(a.timeline)}</div></div>`).join("") : `<div class="empty">No actions needed. Every consignment is within tolerance.</div>`;
+  }
+
+  // ---------- globe ----------
+  const SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+  const ICONS = {
+    sea: SVG('<path d="M2 20c2 1 4 1 6 0s4-1 6 0 4 1 6 0"/><path d="M4 17.5 3 13h18l-2 4.5"/><path d="M6 13V8h12v5"/><path d="M12 8V4"/>'),
+    air: SVG('<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>'),
+    road: SVG('<path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/>'),
+    rail: SVG('<path d="M12 2c-4 0-8 .5-8 4v9.5A3.5 3.5 0 0 0 7.5 19L6 20.5V21h12v-.5L16.5 19a3.5 3.5 0 0 0 3.5-3.5V6c0-3.5-4-4-8-4z"/><path d="M4 11h16"/><path d="M12 3v8"/>'),
+    flag: SVG('<path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/>'),
+    anchor: SVG('<circle cx="12" cy="5" r="3"/><path d="M12 22V8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/>'),
+    alert: SVG('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
+  };
+  const modeKey = (m) => ({ sea: "sea", air: "air", road: "road", rail: "rail" }[String(m || "").toLowerCase()] || "sea");
+  const RGB = { low: "21,128,61", elevated: "180,83,9", high: "185,28,28" };
+  const FACTOR_NAME = { weather_risk_index: "Weather index", geopolitical_risk_index: "Geopolitical index", port_congestion_index: "Port congestion" };
+  const SITUATION = {
+    weather_risk: "Severe weather risk along the lane", geopolitical_risk: "Elevated geopolitical and customs risk on the corridor",
+    disruption_recency: "This lane was disrupted recently", lead_time_risk: "Long lead time leaves little room to recover",
+    lead_time_variability: "Transit times on this lane are inconsistent", price_volatility: "Fuel and commodity prices are swinging",
+    reliability_risk: "Carrier on-time record is weak",
+  };
+  const levelBand = (v) => (v >= 60 ? "high" : v >= 40 ? "elevated" : "low");
+  // spherical helpers
+  const rad = (d) => (d * Math.PI) / 180, deg = (r) => (r * 180) / Math.PI;
+  const vec = ([la, lo]) => [Math.cos(rad(la)) * Math.cos(rad(lo)), Math.cos(rad(la)) * Math.sin(rad(lo)), Math.sin(rad(la))];
+  const ll = ([x, y, z]) => [deg(Math.atan2(z, Math.hypot(x, y))), deg(Math.atan2(y, x))];
+  const ang = (p, q) => { const a = vec(p), b = vec(q); return Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))); };
+  function slerp(p, q, t) { const w = ang(p, q); if (w < 1e-9) return p; const a = vec(p), b = vec(q), s1 = Math.sin((1 - t) * w) / Math.sin(w), s2 = Math.sin(t * w) / Math.sin(w); return ll([0, 1, 2].map((i) => a[i] * s1 + b[i] * s2)); }
+  function along(pts, t) {
+    const seg = []; let tot = 0; for (let i = 0; i < pts.length - 1; i++) { const d = ang(pts[i], pts[i + 1]); seg.push(d); tot += d; }
+    let rem = t * tot; for (let i = 0; i < seg.length; i++) { if (rem <= seg[i]) return slerp(pts[i], pts[i + 1], seg[i] ? rem / seg[i] : 0); rem -= seg[i]; }
+    return pts[pts.length - 1];
+  }
+  const G = { g: null, band: "all", focus: null, mouse: [0, 0], ready: false, loading: null };
+
+  function signalBars(i) {
+    const rows = [["Weather", i.weather_risk_index], ["Geopolitical", i.geopolitical_risk_index], ["Port congestion", i.port_congestion_index]].filter(([, v]) => v != null);
+    return `<div class="gt-bars">${rows.map(([k, v]) => `<span>${k}</span><span class="tr"><span style="width:${Math.min(100, v)}%;background:${BAND_COLOR[levelBand(v)]}"></span></span><span class="n">${(+v).toFixed(0)}</span>`).join("")}</div>`;
+  }
+  function lastDisruption(r) {
+    const d = state.overview.recent_disruptions.find((x) => x.consignment_id === r.consignment_id);
+    const days = r.inputs.days_since_last_disruption;
+    if (days == null || days >= 999) return "No disruption on record for this lane.";
+    return `Last lane disruption ${days} day${days === 1 ? "" : "s"} ago${d ? ` · ${esc(d.disruption_reason)}` : ""}.`;
+  }
+  function headline(r) { return r.risk_band === "low" ? "Operating normally" : SITUATION[r.top_driver?.key] || "Risk signals elevated"; }
+  function statusLine(r) { const j = r.journey; if (!j) return ""; return j.status === "In transit" ? `In transit · day ${j.elapsed_days} of ${j.total_days} · ETA ${fmtDate(j.eta_date)}` : j.status === "Scheduled" ? `Departs ${fmtDate(j.dispatch_date)} · ETA ${fmtDate(j.eta_date)}` : "Arrived"; }
+
+  function tipConsignment(r, kind) {
+    return `<div class="gt-top"><span class="gt-kind">${ICONS[modeKey(r.mode)]}${kind}</span>${chip(r.risk_band)}</div>
+      <div class="gt-title">${esc(routeText(r))}</div><div class="gt-sub"><span class="mono">${esc(r.consignment_id)}</span> · ${esc(r.cargo || "")} · ${fmtUSD(r.cargo_value_usd)}</div>
+      <div class="gt-sec"><div class="gt-headline" style="--c:${BAND_COLOR[r.risk_band]}">${esc(headline(r))}</div><div class="gt-sub">${esc(statusLine(r))} · ${esc(r.mode || "")} with ${esc(r.carrier || "—")}</div></div>
+      <div class="gt-sec"><div class="gt-sec-h">Signals on this lane</div>${signalBars(r.inputs)}<div class="gt-sub" style="margin-top:6px">${lastDisruption(r)}</div></div>
+      <div class="gt-row" style="margin-top:6px"><span>7-day risk <b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></span><span>${r.best_alternative ? "Best option: " + esc(r.best_alternative.title) : "Stay on current plan"}</span></div>
+      <div class="gt-foot">Click to open the consignment →</div>`;
+  }
+  function tipPlace(p) {
+    const worst = p.items.reduce((a, b) => (b.r.risk_score > a.r.risk_score ? b : a));
+    return `<div class="gt-top"><span class="gt-kind">${p.dest ? ICONS.flag + "Destination" : ICONS.anchor + "Origin"}${p.dest && p.origin ? " & origin" : ""}</span>${chip(worst.r.risk_band)}</div>
+      <div class="gt-title">${esc(p.name)}</div><div class="gt-sub">${esc(p.country)}</div>
+      <div class="gt-about">${esc(p.about)}</div>
+      <div class="gt-sec"><div class="gt-sec-h">Situation</div><div class="gt-headline" style="--c:${BAND_COLOR[worst.r.risk_band]}">${esc(headline(worst.r))}</div>${signalBars(worst.r.inputs)}<div class="gt-sub" style="margin-top:6px">${lastDisruption(worst.r)}</div></div>
+      <div class="gt-sec"><div class="gt-sec-h">Consignments here</div>${p.items.map(({ r, role }) => `<div class="gt-row"><span><b>${esc(r.consignment_id)}</b> ${role === "dest" ? "arriving" : "departing"} · ${role === "dest" ? "ETA " + fmtDate(r.journey?.eta_date) : fmtDate(r.journey?.dispatch_date)}</span><span style="color:${BAND_COLOR[r.risk_band]};font-weight:700">${r.risk_score.toFixed(0)}</span></div>`).join("")}</div>`;
+  }
+  function tipHotspot(h) {
+    return `<div class="gt-top"><span class="gt-kind">${ICONS.alert}Risk hotspot</span>${chip(h.band)}</div>
+      <div class="gt-title">${esc(h.name)}</div><div class="gt-about">${esc(h.about)}</div>
+      <div class="gt-sec"><div class="gt-sec-h">Current signal</div><div class="gt-bars"><span>${FACTOR_NAME[h.factor]}</span><span class="tr"><span style="width:${Math.min(100, h.level)}%;background:${BAND_COLOR[h.band]}"></span></span><span class="n">${h.level.toFixed(0)}</span></div></div>
+      <div class="gt-sec"><div class="gt-sec-h">Consignments passing</div>${h.items.map((r) => `<div class="gt-row"><span><b>${esc(r.consignment_id)}</b> ${esc(routeText(r))}</span><span style="color:${BAND_COLOR[r.risk_band]};font-weight:700">${r.risk_score.toFixed(0)}</span></div>`).join("")}</div>`;
+  }
+  function showTip(html) { const t = $("#globe-tip"); t.innerHTML = html; t.classList.add("show"); placeTip(); }
+  function hideTip() { $("#globe-tip").classList.remove("show"); }
+  function placeTip() {
+    const t = $("#globe-tip"), st = $("#globe-stage"); if (!t.classList.contains("show")) return;
+    const [x, y] = G.mouse, w = t.offsetWidth, h = t.offsetHeight, W = st.clientWidth, H = st.clientHeight;
+    t.style.left = Math.max(10, Math.min(W - w - 10, x + 16 > W - w - 290 ? x - w - 16 : x + 16)) + "px";
+    t.style.top = Math.max(10, Math.min(H - h - 10, y - 20)) + "px";
+  }
+
+  function buildGlobeData() {
+    const geo = state.overview.geo, rows = state.rows.filter((r) => geo.routes[r.consignment_id]);
+    const vis = (r) => G.band === "all" || r.risk_band === G.band;
+    const paths = [], arcs = [], markers = [], rings = [];
+    const places = {};
+    for (const r of rows) {
+      const g = geo.routes[r.consignment_id], on = vis(r), col = RGB[r.risk_band];
+      if (g.air) {
+        arcs.push({ r, kind: "base", on, sLat: g.origin.lat, sLng: g.origin.lng, eLat: g.destination.lat, eLng: g.destination.lng });
+        arcs.push({ r, kind: "flow", on, sLat: g.origin.lat, sLng: g.origin.lng, eLat: g.destination.lat, eLng: g.destination.lng });
+      } else {
+        paths.push({ r, kind: "base", on, points: g.points }); paths.push({ r, kind: "flow", on, points: g.points });
+      }
+      for (const [role, pl] of [["origin", g.origin], ["dest", g.destination]]) {
+        const p = (places[pl.name] ||= { ...pl, items: [], origin: false, dest: false });
+        p.items.push({ r, role }); p[role] = true;
+      }
+      const j = r.journey, moving = j && j.status === "In transit";
+      const pos = moving ? along(g.points, j.progress) : j && j.status === "Arrived" ? [g.destination.lat, g.destination.lng] : [g.origin.lat, g.origin.lng];
+      markers.push({ type: "vehicle", r, on, lat: pos[0], lng: pos[1], alt: g.air && moving ? 0.12 : 0.012 });
+      if (r.risk_band === "high") rings.push({ lat: pos[0], lng: pos[1], band: "high", max: 4.5, on });
+    }
+    for (const p of Object.values(places)) {
+      const on = p.items.some(({ r }) => vis(r));
+      markers.push({ type: "place", p, on, lat: p.lat, lng: p.lng, alt: 0.006 });
+    }
+    const byId = Object.fromEntries(rows.map((r) => [r.consignment_id, r]));
+    const hot = geo.hotspots.map((h) => {
+      const items = h.lanes.map((c) => byId[c]).filter(Boolean);
+      const level = Math.max(...items.map((r) => +r.inputs[h.factor] || 0));
+      return { ...h, items, level, band: levelBand(level) };
+    }).filter((h) => h.items.length);
+    for (const h of hot) {
+      const on = h.items.some(vis);
+      markers.push({ type: "hot", h, on, lat: h.lat, lng: h.lng, alt: 0.008 });
+      if (h.band !== "low") rings.push({ lat: h.lat, lng: h.lng, band: h.band, max: h.band === "high" ? 6 : 4, on });
+    }
+    return { paths, arcs, markers, rings, hot, rows };
+  }
+
+  function markerEl(d) {
+    const el = document.createElement("div");
+    el.className = "gm " + (d.type === "vehicle" ? "vehicle" : d.type === "hot" ? "hot" : d.p.dest ? "dest" : "origin") + (d.on ? "" : " dim");
+    if (d.type === "vehicle") {
+      const r = d.r, c = BAND_COLOR[r.risk_band];
+      el.style.setProperty("--c", c); el.style.setProperty("--cp", `rgba(${RGB[r.risk_band]},.45)`);
+      el.innerHTML = `<div class="in"><span class="dot"></span><span class="badge">${ICONS[modeKey(r.mode)]}</span><span class="lbl">${esc(r.consignment_id)}<small>${r.risk_score.toFixed(0)}</small></span></div>`;
+      el.onmouseenter = () => showTip(tipConsignment(r, r.journey?.status === "In transit" ? `${r.mode} · en route` : `${r.mode} · at origin`));
+      el.onclick = () => openDrawer(r.consignment_id);
+    } else if (d.type === "place") {
+      const worst = d.p.items.reduce((a, b) => (b.r.risk_score > a.r.risk_score ? b : a)).r;
+      el.style.setProperty("--c", d.p.dest ? BAND_COLOR[worst.risk_band] : "#667085");
+      el.innerHTML = `<div class="in"><span class="dot"></span><span class="badge">${d.p.dest ? ICONS.flag : ICONS.anchor}</span><span class="lbl">${esc(d.p.name)}<small>${esc(d.p.country)}</small></span></div>`;
+      el.onmouseenter = () => showTip(tipPlace(d.p));
+      el.onclick = () => flyTo(d.lat, d.lng, 0.9);
+    } else {
+      el.style.setProperty("--c", BAND_COLOR[d.h.band]);
+      el.innerHTML = `<div class="in"><span class="dot"></span><span class="badge">${ICONS.alert}</span><span class="lbl">${esc(d.h.name)}</span></div>`;
+      el.onmouseenter = () => showTip(tipHotspot(d.h));
+      el.onclick = () => flyTo(d.lat, d.lng, 0.9);
+    }
+    el.onmouseleave = hideTip;
+    el.style.pointerEvents = "auto";
+    return el;
+  }
+
+  function flyTo(lat, lng, altitude = 1.1) { if (!G.g) return; setRotate(false); G.g.pointOfView({ lat, lng, altitude }, 1400); }
+  function setRotate(on) { if (!G.g) return; G.g.controls().autoRotate = on; $("#gc-rotate").classList.toggle("active", on); $("#gc-rotate").setAttribute("aria-pressed", on); }
+  function focusConsignment(cid) {
+    const r = state.rows.find((x) => x.consignment_id === cid), g = state.overview.geo.routes[cid]; if (!r || !g) return;
+    G.focus = G.focus === cid ? null : cid; paintGlobe();
+    const j = r.journey, pos = j && j.status === "In transit" ? along(g.points, j.progress) : along(g.points, 0.5);
+    flyTo(pos[0], pos[1], G.focus ? 1.25 : 2.1);
+  }
+
+  function paintGlobe() {
+    const g = G.g; if (!g) return;
+    const D = buildGlobeData(); G.data = D;
+    const alpha = (d, a) => (d.on && (!G.focus || d.r.consignment_id === G.focus) ? a : a * 0.12);
+    g.pathsData(D.paths).arcsData(D.arcs).ringsData(D.rings.filter((x) => x.on)).htmlElementsData(D.markers);
+    g.pathColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.35)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.2)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    g.arcColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.3)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.15)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    // lists
+    $("#globe-list").innerHTML = D.rows.map((r) => `<div class="gp-item ${G.focus === r.consignment_id ? "on" : ""}" data-focus="${esc(r.consignment_id)}" style="${G.band !== "all" && r.risk_band !== G.band ? "opacity:.4" : ""}"><span class="d" style="background:${BAND_COLOR[r.risk_band]}"></span><span class="t">${esc(routeText(r))}<span class="s">${esc(r.consignment_id)} · ${esc(r.mode || "")} · ${esc(r.journey?.status || "")}</span></span><span class="v" style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(0)}</span></div>`).join("");
+    const hs = [...D.hot].sort((a, b) => b.level - a.level);
+    $("#hotspot-count").textContent = `${hs.filter((h) => h.band !== "low").length} active`;
+    $("#hotspot-list").innerHTML = hs.map((h) => `<div class="gp-item" data-hot="${esc(h.id)}"><span class="d" style="background:${BAND_COLOR[h.band]}"></span><span class="t">${esc(h.name)}<span class="s">${FACTOR_NAME[h.factor]} ${h.level.toFixed(0)}</span></span><span class="v" style="color:${BAND_COLOR[h.band]};font-size:11px;text-transform:capitalize">${h.band}</span></div>`).join("");
+    const unm = state.overview.geo.unmapped.length;
+    $("#globe-sub").textContent = `${D.rows.length} routes · ${hs.filter((h) => h.band !== "low").length} active risk hotspots${unm ? ` · ${unm} consignment${unm > 1 ? "s" : ""} with ports not on the map` : ""}`;
+  }
+
+  async function renderGlobe() {
+    if (G.g) { paintGlobe(); return; }
+    if (G.loading) return G.loading;
+    const fb = $("#globe-fallback");
+    if (typeof Globe !== "function" || typeof topojson === "undefined") { fb.hidden = false; fb.textContent = "The 3D map could not load in this browser."; return; }
+    G.loading = (async () => {
+      const world = await fetch("/static/vendor/countries-110m.json").then((r) => r.json());
+      const land = topojson.feature(world, world.objects.countries).features;
+      // The hex tiler fails on North Korea's 110m outline; it still appears in the solid land layer.
+      const hexLand = land.filter((f) => f.id !== "408");
+      const el = $("#globe"), stage = $("#globe-stage");
+      let g;
+      try { g = new Globe(el, { animateIn: true }); } catch (e) { g = Globe({ animateIn: true })(el); }
+      G.g = g;
+      g.width(el.clientWidth).height(el.clientHeight).backgroundColor("rgba(0,0,0,0)")
+        .showAtmosphere(true).atmosphereColor("#7FB0DE").atmosphereAltitude(0.17)
+        .hexPolygonsData(hexLand).hexPolygonResolution(3).hexPolygonMargin(0.42).hexPolygonAltitude(0.004)
+        .hexPolygonColor(() => "rgba(120,142,168,0.78)")
+        .polygonsData(land.filter((f) => f.id !== "010"))
+        .polygonAltitude(0.0015).polygonCapColor(() => "rgba(172,190,211,0.5)").polygonSideColor(() => "rgba(0,0,0,0)")
+        .polygonStrokeColor(() => "rgba(255,255,255,0.9)").polygonsTransitionDuration(0)
+        .pathPoints("points").pathPointLat((p) => p[0]).pathPointLng((p) => p[1]).pathPointAlt(0.006).pathResolution(2)
+        .pathStroke((d) => (d.kind === "base" ? 1.1 : 2.4)).pathDashLength((d) => (d.kind === "base" ? 1 : 0.06)).pathDashGap((d) => (d.kind === "base" ? 0 : 0.04))
+        .pathDashAnimateTime((d) => (d.kind === "base" ? 0 : 14000)).pathTransitionDuration(0)
+        .arcStartLat("sLat").arcStartLng("sLng").arcEndLat("eLat").arcEndLng("eLng").arcAltitudeAutoScale(0.4)
+        .arcStroke((d) => (d.kind === "base" ? 0.5 : 0.9)).arcDashLength((d) => (d.kind === "base" ? 1 : 0.2)).arcDashGap((d) => (d.kind === "base" ? 0 : 0.15))
+        .arcDashAnimateTime((d) => (d.kind === "base" ? 0 : 3000)).arcsTransitionDuration(0)
+        .ringColor((d) => (t) => `rgba(${RGB[d.band]},${Math.max(0, 0.75 - t)})`).ringMaxRadius("max").ringPropagationSpeed(2.2).ringRepeatPeriod(1100).ringAltitude(0.005)
+        .htmlLat("lat").htmlLng("lng").htmlAltitude("alt").htmlElement(markerEl).htmlTransitionDuration(0)
+        .htmlElementVisibilityModifier((elm, visible) => elm.classList.toggle("hidden-behind", !visible))
+        .onPathHover((d) => { el.style.cursor = d ? "pointer" : ""; d ? showTip(tipConsignment(d.r, `${d.r.mode} route`)) : hideTip(); })
+        .onArcHover((d) => { el.style.cursor = d ? "pointer" : ""; d ? showTip(tipConsignment(d.r, "Air route")) : hideTip(); })
+        .onPathClick((d) => openDrawer(d.r.consignment_id)).onArcClick((d) => openDrawer(d.r.consignment_id))
+        .onZoom(({ altitude }) => stage.classList.toggle("near", altitude < 1.45));
+      const mat = g.globeMaterial(); mat.color.set("#F4F8FC"); if (mat.emissive) mat.emissive.set("#DCE7F2"); if ("emissiveIntensity" in mat) mat.emissiveIntensity = 0.35; if ("shininess" in mat) mat.shininess = 8;
+      const ctr = g.controls(); ctr.autoRotate = true; ctr.autoRotateSpeed = 0.35; ctr.minDistance = 115; ctr.maxDistance = 520; ctr.enableDamping = true;
+      g.pointOfView({ lat: 18, lng: 30, altitude: 2.35 });
+      stage.addEventListener("mousemove", (e) => { const b = stage.getBoundingClientRect(); G.mouse = [e.clientX - b.left, e.clientY - b.top]; placeTip(); });
+      stage.addEventListener("mouseleave", hideTip);
+      stage.addEventListener("pointerdown", (e) => { if (e.target.closest("canvas")) setRotate(false); });
+      new ResizeObserver(() => g.width(el.clientWidth).height(el.clientHeight)).observe(el);
+      paintGlobe();
+    })();
+    return G.loading;
+  }
+  function globePause() { if (G.g) G.g.pauseAnimation(); hideTip(); }
+  function globeResume() { if (G.g) { G.g.resumeAnimation(); if (state.globeDirty) { state.globeDirty = false; paintGlobe(); } } }
+  $("#gc-rotate").addEventListener("click", () => setRotate(!G.g?.controls().autoRotate));
+  $("#gc-reset").addEventListener("click", () => { G.focus = null; paintGlobe(); G.g?.pointOfView({ lat: 18, lng: 30, altitude: 2.35 }, 1200); setRotate(true); });
+  const zoomBy = (k) => { if (!G.g) return; const p = G.g.pointOfView(); G.g.pointOfView({ ...p, altitude: Math.max(0.2, Math.min(4.5, p.altitude * k)) }, 500); };
+  $("#gc-in").addEventListener("click", () => zoomBy(0.65)); $("#gc-out").addEventListener("click", () => zoomBy(1.5));
+  $("#globe-filter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; $$("#globe-filter button").forEach((x) => x.classList.toggle("active", x === b)); G.band = b.dataset.band; G.focus = null; paintGlobe(); });
+  $("#globe-list").addEventListener("click", (e) => { const it = e.target.closest("[data-focus]"); if (it) focusConsignment(it.dataset.focus); });
+  $("#globe-list").addEventListener("dblclick", (e) => { const it = e.target.closest("[data-focus]"); if (it) openDrawer(it.dataset.focus); });
+  $("#hotspot-list").addEventListener("click", (e) => { const it = e.target.closest("[data-hot]"); if (!it) return; const h = G.data.hot.find((x) => x.id === it.dataset.hot); if (h) flyTo(h.lat, h.lng, 0.95); });
+
+  // ---------- diagrams ----------
+  function renderRadar() {
+    const feats = state.meta.features, rows = state.rows; if (!rows.length) return;
+    const total = rows.reduce((a, r) => a + r.cargo_value_usd, 0) || 1;
+    const val = (r, k) => r.factors.find((f) => f.key === k)?.value || 0;
+    const avg = feats.map((f) => rows.reduce((a, r) => a + val(r, f.key) * r.cargo_value_usd, 0) / total);
+    const worst = rows.reduce((a, b) => (b.risk_score > a.risk_score ? b : a));
+    state.charts.radar?.destroy();
+    state.charts.radar = new Chart($("#chart-radar"), { type: "radar", data: {
+      labels: feats.map((f) => f.label.replace(" & climate", "").replace("Commodity price", "Price").replace("Supplier", "Carrier")),
+      datasets: [
+        { label: "Book average (value-weighted)", data: avg, borderColor: "#0F4C81", backgroundColor: "rgba(15,76,129,.14)", pointBackgroundColor: "#0F4C81", borderWidth: 2, pointRadius: 3 },
+        { label: `Riskiest: ${worst.consignment_id}`, data: feats.map((f) => val(worst, f.key)), borderColor: "#B91C1C", backgroundColor: "rgba(185,28,28,.06)", borderDash: [5, 4], pointBackgroundColor: "#B91C1C", borderWidth: 1.6, pointRadius: 2.5 } ] },
+      options: { responsive: true, maintainAspectRatio: false, animation: { duration: 900 }, plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.raw.toFixed(2)}` } } },
+        scales: { r: { min: 0, max: 1, ticks: { stepSize: 0.25, display: false }, grid: { color: "#E4E7EC" }, angleLines: { color: "#E4E7EC" }, pointLabels: { font: { size: 10.5 }, color: "#344054" } } } } });
+  }
+  function renderDonut() {
+    const rows = state.rows, bands = ["high", "elevated", "low"];
+    const vals = bands.map((b) => rows.filter((r) => r.risk_band === b).reduce((a, r) => a + r.cargo_value_usd, 0));
+    const counts = bands.map((b) => rows.filter((r) => r.risk_band === b).length);
+    const total = vals.reduce((a, b) => a + b, 0) || 1;
+    state.charts.donut?.destroy();
+    state.charts.donut = new Chart($("#chart-donut"), { type: "doughnut", data: { labels: bands.map((b) => b[0].toUpperCase() + b.slice(1)), datasets: [{ data: vals, backgroundColor: bands.map((b) => BAND_COLOR[b]), borderColor: "#fff", borderWidth: 3, hoverOffset: 8 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "70%", animation: { animateRotate: true, duration: 1100 }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.label}: ${fmtUSD(c.raw)}` } } } } });
+    $("#donut-center").innerHTML = `<div><b>${fmtUSD(total)}</b><span>cargo value</span></div>`;
+    $("#donut-legend").innerHTML = bands.map((b, i) => `<div class="dl-row"><i style="background:${BAND_COLOR[b]}"></i><span><b>${b[0].toUpperCase() + b.slice(1)}</b><span class="p">${counts[i]} consignment${counts[i] === 1 ? "" : "s"} · ${((vals[i] / total) * 100).toFixed(0)}%</span></span><b>${fmtUSD(vals[i])}</b><div class="dl-bar"><span style="width:0;background:${BAND_COLOR[b]}" data-w="${(vals[i] / total) * 100}"></span></div></div>`).join("");
+    requestAnimationFrame(() => $$("#donut-legend .dl-bar span").forEach((s) => (s.style.width = s.dataset.w + "%")));
+  }
+  function renderTimeline() {
+    const rows = [...state.rows].filter((r) => r.journey).sort((a, b) => a.journey.dispatch_date.localeCompare(b.journey.dispatch_date));
+    if (!rows.length) { $("#timeline").innerHTML = `<div class="empty">No dated consignments.</div>`; return; }
+    const day = 864e5, d = (s) => new Date(s + "T00:00:00").getTime(), today = new Date(new Date().toDateString()).getTime();
+    const t0 = Math.min(today, ...rows.map((r) => d(r.journey.dispatch_date))) - 2 * day, t1 = Math.max(today, ...rows.map((r) => d(r.journey.eta_date))) + 2 * day;
+    const W = 440, L = 78, R = 10, top = 24, rh = 30, H = top + rows.length * rh + 22, x = (t) => L + ((t - t0) / (t1 - t0)) * (W - L - R);
+    let ticks = ""; for (let t = t0 - (t0 % (14 * day)) + 7 * day; t < t1; t += 14 * day) ticks += `<line x1="${x(t)}" x2="${x(t)}" y1="${top - 4}" y2="${H - 18}" stroke="#EEF0F3"/><text x="${x(t)}" y="${H - 4}" font-size="10" fill="#98A2B3" text-anchor="middle">${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</text>`;
+    const bars = rows.map((r, i) => {
+      const y = top + i * rh, a = x(d(r.journey.dispatch_date)), b = x(d(r.journey.eta_date)), c = BAND_COLOR[r.risk_band];
+      const moving = r.journey.status === "In transit", px = moving ? a + (b - a) * r.journey.progress : a;
+      return `<g class="tl-row" data-open="${esc(r.consignment_id)}"><text class="lab" x="0" y="${y + 13}" font-size="10.5" fill="#344054" font-family="JetBrains Mono, monospace">${esc(r.consignment_id)}</text>
+        <rect x="${a}" y="${y + 4}" width="${Math.max(4, b - a)}" height="12" rx="6" fill="${c}" opacity=".16"/>
+        <rect class="bar" x="${a}" y="${y + 4}" width="${Math.max(4, px - a)}" height="12" rx="6" fill="${c}" opacity=".85"><animate attributeName="width" from="0" to="${Math.max(4, px - a)}" dur=".9s" fill="freeze"/></rect>
+        <circle cx="${b}" cy="${y + 10}" r="3.5" fill="#fff" stroke="${c}" stroke-width="2"/>
+        ${moving ? `<circle cx="${px}" cy="${y + 10}" r="5" fill="${c}" stroke="#fff" stroke-width="2"><animate attributeName="r" values="5;6.5;5" dur="1.6s" repeatCount="indefinite"/></circle>` : ""}
+        <title>${esc(routeText(r))} · ${esc(statusLine(r))} · risk ${r.risk_score.toFixed(0)}</title></g>`;
+    }).join("");
+    const tx = x(today);
+    $("#timeline").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Consignment timeline">${ticks}
+      <line x1="${tx}" x2="${tx}" y1="${top - 12}" y2="${H - 18}" stroke="#0F4C81" stroke-width="1.5" stroke-dasharray="3 3"/><rect x="${tx - 20}" y="0" width="40" height="15" rx="7.5" fill="#0F4C81"/><text x="${tx}" y="11" font-size="9.5" fill="#fff" text-anchor="middle" font-weight="600">TODAY</text>${bars}</svg>
+      <div class="legend-inline" style="margin-top:8px"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span><span class="tag">filled = journey completed · ring = ETA</span></div>`;
+  }
+
   function sparkline(vals, band) {
     if (!vals?.length) return `<span class="tag">no history</span>`;
     const w = 96, h = 30, n = vals.length;
@@ -115,41 +409,6 @@
         <div class="alt-cell">${altCell(r)}</div>
       </div>`).join("");
   }
-  function renderHeatmap() {
-    const feats = state.meta.features; const rows = state.rows;
-    const h = $("#heatmap"); h.className = "heat"; h.style.gridTemplateColumns = `190px repeat(${feats.length}, 1fr) 60px`;
-    let html = `<div class="hh" style="text-align:left">Consignment</div>` + feats.map((f) => `<div class="hh" title="${esc(f.explain)}">${esc(f.label)}</div>`).join("") + `<div class="hh">Risk</div>`;
-    for (const r of rows) {
-      const byKey = Object.fromEntries(r.factors.map((f) => [f.key, f.value]));
-      html += `<div class="hl" data-open="${esc(r.consignment_id)}" title="${esc(r.consignment_id)}"><span class="mono">${esc(r.consignment_id)}</span> <span class="sub">${esc(routeText(r))}</span></div>`;
-      html += feats.map((f) => { const v = byKey[f.key]; return `<div class="hc" style="background:${heatColor(v)};color:${textOn(v)}">${v.toFixed(2)}</div>`; }).join("");
-      html += `<div class="hs" style="background:${BAND_COLOR[r.risk_band]}1A;color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(0)}</div>`;
-    }
-    h.innerHTML = html;
-  }
-
-  // ---------- consignments table ----------
-  function filtered() {
-    const q = state.q.toLowerCase(); const { key, dir } = state.sort;
-    const val = (r) => (key === "eta" ? r.journey?.eta_date || "" : r[key]);
-    return state.rows.filter((r) => (state.band === "all" || r.risk_band === state.band) && (!q || [r.consignment_id, r.cargo, r.supplier_name, r.origin_port, r.destination_port, r.origin_country, r.destination_country, r.carrier, r.mode].join(" ").toLowerCase().includes(q)))
-      .sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""))) * dir; });
-  }
-  function renderTable() {
-    const rows = filtered();
-    $("#c-count").textContent = `${rows.length} of ${state.rows.length} consignments`;
-    $("#c-table tbody").innerHTML = rows.map((r) => `<tr class="clickable" data-open="${esc(r.consignment_id)}">
-      <td><div class="cid">${esc(r.consignment_id)}</div><div class="name">${esc(r.cargo || "")}</div><div class="sub">${esc(r.supplier_name || "")}</div></td>
-      <td><div class="name nowrap">${route(r)}</div><div class="sub">${esc(r.origin_country || "")} → ${esc(r.destination_country || "")}</div><div class="sub"><span class="mode">${esc(r.mode || "—")}</span>${esc(r.carrier || "")}</div></td>
-      <td class="mono nowrap">${fmtDate(r.journey?.dispatch_date)} → ${fmtDate(r.journey?.eta_date)}<div class="sub">${esc(r.journey?.status || "")}</div></td>
-      <td class="num">${fmtUSD(r.cargo_value_usd)}</td><td class="num">${scoreBar(r)}</td><td>${chip(r.risk_band)}</td>
-      <td>${r.top_driver ? `${esc(r.top_driver.label)} <span class="tag">${r.top_driver.value.toFixed(2)}</span>` : '<span class="tag">none</span>'}</td>
-      <td class="alt-cell">${altCell(r)}</td><td class="num">${fmtUSD(r.expected_loss_usd)}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">No consignments match.</td></tr>`;
-    $$("#c-table th[data-sort]").forEach((th) => { th.textContent = th.textContent.replace(/ [↑↓]$/, ""); if (th.dataset.sort === state.sort.key) th.textContent += state.sort.dir > 0 ? " ↑" : " ↓"; });
-  }
-  $("#c-search").addEventListener("input", (e) => { state.q = e.target.value; renderTable(); });
-  $("#c-band-filter").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; $$("#c-band-filter button").forEach((x) => x.classList.toggle("active", x === b)); state.band = b.dataset.band; renderTable(); });
-  $("#c-table thead").addEventListener("click", (e) => { const th = e.target.closest("th[data-sort]"); if (!th) return; const k = th.dataset.sort; state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : (["consignment_id", "origin_port", "eta"].includes(k) ? 1 : -1) }; renderTable(); });
 
   // ---------- forms (shared by edit drawer and what-if) ----------
   const opt = (list) => list.map((x) => `${x}:${x}`);
