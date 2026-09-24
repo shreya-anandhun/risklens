@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from risklens import store
 from risklens.geo import geo_payload
 from risklens.cargo import profile as cargo_profile
+from risklens import notify
 from risklens.config import COMPANY, DATA_PROCESSED, DATA_RAW, FEATURE_KEYS, FEATURES, HORIZON_DAYS, RISK_BANDS
 from risklens.predictor import apply_changes, load_model, portfolio_summary, score_records
 from risklens.validation import OPTIONAL, REQUIRED, validate_dataframe, validate_record
@@ -90,11 +91,14 @@ def overview():
     dis["lane"] = dis.supplier_id.map(lambda s: lane_label(lanes[s]))
     dis["consignment_id"] = dis.supplier_id.map(lambda s: lanes[s]["consignment_id"])
     actions = []
+    sent = notify.latest_by_action()
     for r in results:
         for rec in r["recommendations"]:
             if rec["id"] != "maintain":
                 actions.append({**rec, "consignment_id": r["consignment_id"], "lane": lane_label(r),
-                                "risk_score": r["risk_score"], "risk_band": r["risk_band"]})
+                                "risk_score": r["risk_score"], "risk_band": r["risk_band"],
+                                "impact": notify.impact(rec, r), "notified": sent.get(f"{r['consignment_id']}|{rec['id']}"),
+                                "affected": [{"role": w["role"], "name": w["name"]} for w in notify.draft(rec, r, {**r, **r["inputs"]})["recipients"]]})
     actions.sort(key=lambda a: -a["net_benefit_usd"])
     return {
         "summary": portfolio_summary(results), "consignments": results,
@@ -164,6 +168,49 @@ def consignment_cargo(cid: str):
             "profile": cargo_profile(rec)}
 
 
+# ---------------------------------------------------------------------------
+# warehouse notifications (demo: logged, not delivered)
+# ---------------------------------------------------------------------------
+def _action_for(cid: str, action_id: str):
+    rec = store.get_consignment(cid)
+    if not rec:
+        raise HTTPException(404, "Consignment not found")
+    result = score_records([rec], with_alternatives=False)[0]
+    action = next((a for a in result["recommendations"] if a["id"] == action_id and a["id"] != "maintain"), None)
+    if not action:
+        raise HTTPException(404, "This action is not recommended for the consignment")
+    return rec, result, action
+
+
+@app.get("/api/actions/{cid}/{action_id}/draft")
+def notification_draft(cid: str, action_id: str):
+    rec, result, action = _action_for(cid, action_id)
+    return {"consignment_id": cid, "action_id": action_id, "action": action["action"], **notify.draft(action, result, rec)}
+
+
+@app.post("/api/notifications", status_code=201)
+def send_notification(body: dict):
+    cid, action_id = body.get("consignment_id"), body.get("action_id")
+    if not cid or not action_id:
+        raise HTTPException(422, "consignment_id and action_id are required")
+    rec, result, action = _action_for(cid, action_id)
+    d = notify.draft(action, result, rec)
+    keys = body.get("recipients") or [r["key"] for r in d["recipients"]]
+    recipients = [r for r in d["recipients"] if r["key"] in keys]
+    if not recipients:
+        raise HTTPException(422, "Choose at least one warehouse")
+    subject = str(body.get("subject") or d["subject"]).strip()[:300]
+    text = str(body.get("body") or d["body"]).strip()[:5000]
+    return notify.record({"consignment_id": cid, "action_id": action_id, "action": action["action"], "lane": lane_label(rec),
+                          "recipients": [{k: r[k] for k in ("key", "role", "name", "location", "contact", "email", "task")} for r in recipients],
+                          "subject": subject, "body": text})
+
+
+@app.get("/api/notifications")
+def notifications():
+    return notify.list_notifications()
+
+
 @app.post("/api/consignments/{cid}/apply/{alt_id}")
 def apply_alternative(cid: str, alt_id: str):
     rec = store.get_consignment(cid)
@@ -191,6 +238,7 @@ def remove_consignment(cid: str):
 @app.post("/api/consignments/reset")
 def reset_consignments():
     store.reset()
+    notify.clear()
     return {"count": len(store.list_consignments())}
 
 

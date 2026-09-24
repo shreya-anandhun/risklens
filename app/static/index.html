@@ -106,17 +106,13 @@
 
     <!-- ACTIONS -->
     <section class="view" id="view-actions">
-      <div class="act-hero" id="act-hero"></div>
-      <div class="card act-chart-card">
-        <div class="card-head"><div><h2>Benefit vs cost</h2><p class="muted">What each action is expected to save against what it costs. The gap is the net benefit.</p></div>
-          <div class="legend-inline"><span><i class="lg" style="background:#22C55E"></i>Loss avoided</span><span><i class="lg" style="background:#F87171"></i>Cost</span></div></div>
-        <div id="act-chart" class="act-chart"></div>
+      <div class="card">
+        <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div></div>
+        <div id="top-actions" class="action-list"></div>
       </div>
       <div class="card">
-        <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div>
-          <div class="act-tools"><div class="seg" id="act-filter" role="group" aria-label="Filter by category"></div>
-            <label class="act-sort">Sort<select id="act-sort" class="input"><option value="net">Net benefit</option><option value="red">Risk reduction</option><option value="cost">Lowest cost</option><option value="risk">Consignment risk</option></select></label></div></div>
-        <div id="top-actions" class="act-grid"></div>
+        <div class="card-head"><div><h2>Warehouse notifications</h2><p class="muted">Messages sent to affected warehouses from this page.</p></div><span class="demo-pill">Demo mode · logged, not emailed</span></div>
+        <div id="notif-log"></div>
       </div>
     </section>
 
@@ -147,6 +143,9 @@
   </div>
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
+
+<div class="modal-backdrop" id="modal-backdrop"></div>
+<div class="modal" id="notify-modal" role="dialog" aria-modal="true" aria-labelledby="nm-title" aria-hidden="true"><div class="modal-card" id="notify-body"></div></div>
 
 <div class="toast" id="toast"></div>
 <script src="/static/vendor/chart.umd.js"></script>

@@ -147,3 +147,26 @@ def test_cargo_profile(client):
     g = client.get(f"/api/consignments/{created['consignment_id']}/cargo").json()["profile"]
     assert g.get("generic") and g["load"]["units"] == 1000
     assert client.get("/api/consignments/NOPE/cargo").status_code == 404
+
+
+def test_warehouse_notifications_and_impact(client):
+    from risklens import notify
+    notify.clear()
+    acts = client.get("/api/overview").json()["top_actions"]
+    a = acts[0]
+    imp = a["impact"]
+    assert imp["risk_after"] < imp["risk_before"] and imp["loss_after"] < imp["loss_before"] and imp["effects"]
+    assert a["notified"] is None
+    d = client.get(f"/api/actions/{a['consignment_id']}/{a['id']}/draft").json()
+    assert d["recipients"] and a["consignment_id"] in d["subject"]
+    assert all(r["email"].endswith("@northwind.example.com") for r in d["recipients"])
+    sent = client.post("/api/notifications", json={"consignment_id": a["consignment_id"], "action_id": a["id"],
+                                                    "recipients": [d["recipients"][0]["key"]]})
+    assert sent.status_code == 201 and len(sent.json()["recipients"]) == 1 and "demo" in sent.json()["status"]
+    again = [x for x in client.get("/api/overview").json()["top_actions"] if x["consignment_id"] == a["consignment_id"] and x["id"] == a["id"]][0]
+    assert again["notified"]["id"] == sent.json()["id"]
+    assert len(client.get("/api/notifications").json()) == 1
+    assert client.post("/api/notifications", json={"consignment_id": a["consignment_id"], "action_id": "nope"}).status_code == 404
+    assert client.post("/api/notifications", json={"consignment_id": a["consignment_id"], "action_id": a["id"], "recipients": ["zzz"]}).status_code == 422
+    client.post("/api/consignments/reset")
+    assert client.get("/api/notifications").json() == []

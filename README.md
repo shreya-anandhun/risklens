@@ -51,7 +51,7 @@ Rebuild the data and model from scratch, or run the tests:
 |---|---|
 | **Overview** | KPIs for the consignment book, then an interactive **3D risk globe**. It shows every route coloured by risk, with animated flow and pulsing rings on high-risk positions and hotspots. Zoom in and each location gets an icon: ship, flight, truck or rail for where each consignment is now, a flag for its destination, an anchor for its origin, and a warning sign for chokepoints such as Hormuz, Suez or the Panama Canal. Hover any place for a description of it and its current situation. Click a route or vehicle to open the consignment. Below the globe: a risk-profile radar, cargo value by risk band, a departure and arrival timeline, and recent disruptions on the company's own lanes. |
 | **Consignments** | The consignment board: route, journey progress, 30-day lane risk trend, risk score and best alternative. Click a consignment for its **cargo profile**: what the goods are (HS code, dangerous-goods class), how much is loaded (units, net and gross weight, volume, packages, containers and fill), how it is packed, stowed and secured, handling rules such as "keep dry" or "away from foodstuffs", condition sensors against safe limits, documents, insurance and consignee. |
-| **Recommended actions** | Summary of net benefit, loss avoided and cost to act; a benefit-vs-cost chart; and a card for each mitigation with its rank, category, timing, reason, consignment, risk-reduction ring, cost, loss avoided, net benefit and return. Filter by category, sort, and mark actions as done (remembered in the browser). Clicking a consignment opens its risk details and alternatives. |
+| **Recommended actions** | Mitigations ranked by net benefit. Each action has **Impact if fixed**, a layer showing risk and expected loss before and after, the book-level saving, what gets better, and the warehouses involved. **Notify warehouses** opens a pre-written message to the affected origin and destination warehouses. You can choose recipients and edit it, and once sent the action shows "Notification sent". A log lists every notification. Demo mode: notifications are recorded in `data/portal/notifications.json`, not emailed. Addresses use the reserved `example.com` domain. |
 | **What-if analysis** | Assess a planned consignment before booking it, with alternatives and mitigations, then add it to the book. Or upload a CSV batch; problems are reported by line and field and valid rows are still scored. |
 
 **Reset demo data** in the sidebar restores the seven original consignments after a demo.
@@ -89,12 +89,15 @@ Column names are matched loosely, so `From`, `To`, `Shipment ID`, `ETA` and `OTD
 | POST | `/api/consignments/{id}/apply/{alternative}` | apply an alternative to a consignment |
 | POST | `/api/consignments/reset` · `/api/consignments/import` | restore the demo book / add a validated batch |
 | POST | `/api/score` · `/api/score/csv` | what-if for one consignment / a CSV |
+| GET | `/api/actions/{id}/{action}/draft` | recipients and message for a warehouse notification |
+| GET / POST | `/api/notifications` | notification log / send (logged, demo) |
+| GET | `/api/consignments/{id}/cargo` | cargo profile |
 | GET | `/api/template.csv` · `/api/export.csv` | template / export of the scored book |
 
 ## Project layout
 
 ```
-risklens/   config, generate_data, features, train, rules, predictor, validation, store, geo, cargo, pipeline
+risklens/   config, generate_data, features, train, rules, predictor, validation, store, geo, cargo, notify, pipeline
 app/        main.py (FastAPI), static/ (index.html, styles.css, app.js, vendor/: Chart.js, globe.gl, topojson, country shapes)
 data/       raw/ processed/ portal/ (portal edits, git-ignored)
 models/     risk_model.json, model_meta.json

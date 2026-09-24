@@ -98,79 +98,104 @@
   }
 
   // ---------- actions page ----------
-  const CAT_ICON = {
-    Monitoring: SVGI('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
-    Planning: SVGI('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>'),
-    Inventory: SVGI('<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>'),
-    Scheduling: SVGI('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
-    Routing: SVGI('<circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h7"/>'),
-    Carrier: SVGI('<path d="M1 4h14v12H1z"/><path d="M15 8h4l4 4v4h-8z"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/>'),
-    Commercial: SVGI('<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
-  };
-  function SVGI(d) { return `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`; }
-  const DONE_KEY = "risklens.actions.done";
-  const loadDone = () => { try { return new Set(JSON.parse(localStorage.getItem(DONE_KEY) || "[]")); } catch (e) { return new Set(); } };
-  const saveDone = (set) => { try { localStorage.setItem(DONE_KEY, JSON.stringify([...set])); } catch (e) { /* storage unavailable */ } };
-  const actKey = (a) => `${a.consignment_id}|${a.id}`;
-  const A = { cat: "all", sort: "net" };
   function ring(pct, color, size = 58) {
     const r = size / 2 - 5, c = 2 * Math.PI * r;
     return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="#EEF0F3" stroke-width="6"/><circle class="ring-v" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${c}" style="--c:${c};--off:${c * (1 - pct)}" transform="rotate(-90 ${size / 2} ${size / 2})"/></svg>`;
   }
-  function renderActions() {
-    const acts = state.overview.top_actions.map((a, i) => ({ ...a, rank: i + 1 })), done = loadDone();
-    const sum = (k) => acts.reduce((t, a) => t + a[k], 0);
-    const nDone = acts.filter((a) => done.has(actKey(a))).length, cons = new Set(acts.map((a) => a.consignment_id)).size;
-    const immediate = acts.filter((a) => /immediate/i.test(a.timeline)).length;
-    $("#act-hero").innerHTML = `
-      <div class="ah-tile main"><span class="ah-l">Net benefit if all actions are taken</span><b class="ah-v" data-final="${esc(fmtUSD(sum("net_benefit_usd")))}">${fmtUSD(sum("net_benefit_usd"))}</b><span class="ah-s">${acts.length} actions across ${cons} consignments</span><div class="ah-spark"></div></div>
-      <div class="ah-tile"><span class="ah-l">Loss avoided</span><b class="ah-v good" data-final="${esc(fmtUSD(sum("benefit_usd")))}">${fmtUSD(sum("benefit_usd"))}</b><span class="ah-s">expected, over the next 7 days</span></div>
-      <div class="ah-tile"><span class="ah-l">Cost to act</span><b class="ah-v" data-final="${esc(fmtUSD(sum("cost_usd")))}">${fmtUSD(sum("cost_usd"))}</b><span class="ah-s">${immediate} can start immediately</span></div>
-      <div class="ah-tile prog">${ring(acts.length ? nDone / acts.length : 0, "#0F4C81", 64)}<div><span class="ah-l">Progress</span><b class="ah-v">${nDone} of ${acts.length}</b><span class="ah-s">marked as done</span></div></div>`;
-    $$("#act-hero .ah-v[data-final]").forEach((el) => countUp(el, el.dataset.final));
-    // benefit vs cost chart
-    const maxV = Math.max(1, ...acts.map((a) => Math.max(a.benefit_usd, a.cost_usd)));
-    $("#act-chart").innerHTML = acts.map((a, i) => `<div class="ac-row ${done.has(actKey(a)) ? "done" : ""}" style="animation-delay:${i * 0.06}s">
-      <span class="ac-rank">${a.rank}</span>
-      <span class="ac-lab"><b>${esc(a.action)}</b><small>${esc(a.consignment_id)} · ${esc(a.lane)}</small></span>
-      <span class="ac-bars"><span class="ac-b good" style="--w:${(a.benefit_usd / maxV) * 100}%"></span><span class="ac-b bad" style="--w:${(a.cost_usd / maxV) * 100}%"></span></span>
-      <span class="ac-net"><b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b><small>net</small></span></div>`).join("");
-    // filter chips
-    const cats = [...new Set(acts.map((a) => a.category))];
-    $("#act-filter").innerHTML = [["all", "All"], ...cats.map((c) => [c, c])].map(([k, l]) => `<button data-cat="${esc(k)}" class="${A.cat === k ? "active" : ""}">${esc(l)}${k === "all" ? "" : ` <span class="n">${acts.filter((a) => a.category === k).length}</span>`}</button>`).join("");
-    const sorters = { net: (a, b) => b.net_benefit_usd - a.net_benefit_usd, red: (a, b) => b.risk_reduction - a.risk_reduction, cost: (a, b) => a.cost_usd - b.cost_usd, risk: (a, b) => b.risk_score - a.risk_score };
-    const list = acts.filter((a) => A.cat === "all" || a.category === A.cat).sort(sorters[A.sort]);
-    $("#top-actions").innerHTML = list.length ? list.map((a, i) => {
-      const isDone = done.has(actKey(a)), c = BAND_COLOR[a.risk_band], ratio = a.benefit_usd / Math.max(1, a.cost_usd);
-      return `<article class="act-card ${a.rank === 1 ? "top" : ""} ${isDone ? "done" : ""}" style="animation-delay:${i * 0.07}s" data-key="${esc(actKey(a))}">
-        <div class="act-head">
-          <span class="act-rank r${Math.min(a.rank, 4)}">#${a.rank}</span>
-          <span class="act-cat">${CAT_ICON[a.category] || CAT_ICON.Planning}${esc(a.category)}</span>
-          <span class="act-when">${CAT_ICON.Scheduling}${esc(a.timeline)}</span>
-          <span class="cost-band">${esc(a.cost_band)} cost</span>
+  const actKey = (a) => `${a.consignment_id}|${a.id}`;
+  const openImpact = new Set();
+  const fmtWhen = (iso) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const names = (list) => (list.length <= 2 ? list.join(" and ") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`);
+  function impactHTML(a) {
+    const m = a.impact, s = state.overview.summary, maxL = Math.max(1, m.loss_before);
+    const bookAfter = s.expected_loss_usd - m.loss_avoided;
+    return `<div class="impact">
+      <div class="im-head"><span class="im-kicker">If this is fixed</span><span class="tag">expected effect on ${esc(a.consignment_id)}</span></div>
+      <div class="im-grid">
+        <div class="im-block">
+          <span class="im-l">7-day risk</span>
+          <div class="im-flow"><span class="im-score" style="--c:${BAND_COLOR[m.band_before]}">${m.risk_before.toFixed(0)}<small>${m.band_before}</small></span>
+            <span class="im-arrow"><i></i></span>
+            <span class="im-score after" style="--c:${BAND_COLOR[m.band_after]}">${m.risk_after.toFixed(0)}<small>${m.band_after}</small></span></div>
+          <span class="im-note">${(a.risk_reduction * 100).toFixed(0)}% lower chance of disruption${m.band_before !== m.band_after ? ` · moves from ${m.band_before} to ${m.band_after}` : ""}</span>
         </div>
-        <h3 class="act-title">${esc(a.action)}</h3>
-        <p class="act-why">${esc(a.rationale || "")}</p>
-        <button class="act-cons" data-open="${esc(a.consignment_id)}" title="Open the consignment's risk details"><span class="d" style="background:${c}"></span><span class="mono">${esc(a.consignment_id)}</span><span>${esc(a.lane)}</span>${chip(a.risk_band)}<span class="arrow">→</span></button>
-        <div class="act-metrics">
-          <div class="am-ring">${ring(a.risk_reduction, "#16A34A")}<span><b>${(a.risk_reduction * 100).toFixed(0)}%</b>risk cut</span></div>
-          <div class="am"><span>Cost</span><b>${fmtUSD(a.cost_usd)}</b></div>
-          <div class="am"><span>Loss avoided</span><b class="good">${fmtUSD(a.benefit_usd)}</b></div>
-          <div class="am net"><span>Net benefit</span><b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b><em>${ratio >= 1 ? ratio.toFixed(1) + "× return" : "costs more than it saves"}</em></div>
+        <div class="im-block">
+          <span class="im-l">Expected loss</span>
+          <div class="im-bars"><div><span>Now</span><i><em class="bad" style="--w:100%"></em></i><b>${fmtUSD(m.loss_before)}</b></div>
+            <div><span>After</span><i><em class="good" style="--w:${(m.loss_after / maxL) * 100}%"></em></i><b>${fmtUSD(m.loss_after)}</b></div></div>
+          <span class="im-note"><b class="good">${fmtUSD(m.loss_avoided)}</b> avoided · book total ${fmtUSD(s.expected_loss_usd)} → ${fmtUSD(bookAfter)}</span>
         </div>
-        <div class="act-trigger"><span>Triggered by</span><b>${esc(a.trigger)}</b></div>
-        <div class="act-foot">${isDone ? '<span class="act-stamp">✓ Done</span>' : ""}<button class="btn btn-sm ${isDone ? "btn-secondary" : "btn-primary"} act-done" data-done="${esc(actKey(a))}">${isDone ? "Undo" : "Mark as done"}</button></div>
-      </article>`;
-    }).join("") : `<div class="empty">No actions in this category.</div>`;
-    requestAnimationFrame(() => $$("#view-actions .ring-v").forEach((el) => el.classList.add("go")));
+      </div>
+      <div class="im-sub">What gets better</div>
+      <ul class="im-effects">${m.effects.map((e, i) => `<li style="animation-delay:${0.05 + i * 0.07}s"><span class="ck">✓</span>${esc(e)}</li>`).join("")}</ul>
+      <div class="im-who"><span>Warehouses involved</span>${a.affected.map((w) => `<span class="wh-chip"><em>${esc(w.role)}</em>${esc(w.name)}</span>`).join("")}</div>
+    </div>`;
   }
-  $("#act-filter").addEventListener("click", (e) => { const b = e.target.closest("button[data-cat]"); if (!b) return; A.cat = b.dataset.cat; renderActions(); });
-  $("#act-sort").addEventListener("change", (e) => { A.sort = e.target.value; renderActions(); });
+  function renderActions() {
+    const o = state.overview;
+    $("#top-actions").innerHTML = o.top_actions.length ? o.top_actions.map((a) => {
+      const k = actKey(a), n = a.notified, open = openImpact.has(k);
+      return `<div class="act-item ${n ? "sent" : ""}" data-key="${esc(k)}">
+      <div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div><div class="a-sub">${esc(a.trigger)}</div></div><div class="a-meta">Net benefit<b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b>${esc(a.timeline)}</div></div>
+      <div class="act-extra">
+        ${n ? `<span class="sent-badge"><span class="sb-ic">✓</span>Notification sent to ${esc(names(n.recipients.map((r) => r.name)))} · ${esc(fmtWhen(n.sent_at))}</span>` : `<span class="muted small">Affects ${esc(names(a.affected.map((w) => w.name)))}</span>`}
+        <span class="ae-btns"><button class="btn btn-sm btn-ghost ${open ? "on" : ""}" data-impact="${esc(k)}" aria-expanded="${open}">Impact if fixed <span class="chev">▾</span></button>
+        <button class="btn btn-sm ${n ? "btn-secondary" : "btn-primary"}" data-notify="${esc(k)}">${n ? "Notify again" : "Notify warehouses"}</button></span>
+      </div>
+      ${open ? impactHTML(a) : ""}
+    </div>`;
+    }).join("") : `<div class="empty">No actions needed. Every consignment is within tolerance.</div>`;
+    renderNotifLog();
+  }
+  async function renderNotifLog() {
+    const el = $("#notif-log"); if (!el) return;
+    let log = [];
+    try { log = await api("/api/notifications"); } catch (e) { el.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; return; }
+    el.innerHTML = log.length ? `<ol class="nlog">${log.map((n) => `<li><span class="nl-dot"></span><div class="nl-main"><div class="nl-top"><b>${esc(n.action)}</b><span class="nl-when">${esc(fmtWhen(n.sent_at))}</span></div>
+        <div class="nl-sub"><span class="mono">${esc(n.consignment_id)}</span> · ${esc(n.lane)} · to ${esc(names(n.recipients.map((r) => r.name)))}</div>
+        <details><summary>View message</summary><div class="nl-msg"><b>${esc(n.subject)}</b><pre>${esc(n.body)}</pre><div class="nl-to">${n.recipients.map((r) => `<span>${esc(r.name)} &lt;${esc(r.email)}&gt;</span>`).join("")}</div></div></details></div>
+        <span class="nl-st">✓ Sent</span></li>`).join("")}</ol>` : `<div class="empty small">No notifications sent yet. Use “Notify warehouses” on an action above.</div>`;
+  }
   $("#top-actions").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-done]"); if (!b) return;
-    const done = loadDone(), k = b.dataset.done; done.has(k) ? done.delete(k) : done.add(k); saveDone(done);
-    toast(done.has(k) ? "Action marked as done" : "Action reopened"); renderActions();
+    const ib = e.target.closest("[data-impact]"); if (ib) { const k = ib.dataset.impact; openImpact.has(k) ? openImpact.delete(k) : openImpact.add(k); renderActions(); return; }
+    const nb = e.target.closest("[data-notify]"); if (nb) openNotify(nb.dataset.notify);
   });
+
+  // ---------- notify modal ----------
+  async function openNotify(k) {
+    const [cid, aid] = k.split("|"), m = $("#notify-modal");
+    m.classList.add("open"); m.setAttribute("aria-hidden", "false"); $("#modal-backdrop").classList.add("open");
+    $("#notify-body").innerHTML = `<div class="empty">Preparing message…</div>`;
+    let d; try { d = await api(`/api/actions/${encodeURIComponent(cid)}/${encodeURIComponent(aid)}/draft`); } catch (e) { $("#notify-body").innerHTML = `<div class="alert error">${esc(e.message)}</div>`; return; }
+    const imp = d.impact;
+    $("#notify-body").innerHTML = `
+      <div class="nm-head"><div><div class="eyebrow">Notify affected warehouses</div><h2 id="nm-title">${esc(d.action)}</h2><div class="muted">${esc(cid)} · risk ${imp.risk_before.toFixed(0)} → ${imp.risk_after.toFixed(0)} once done</div></div><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <div class="nm-demo">Demo mode: the message is recorded in RiskLens and shown in the log. It is not emailed or texted to anyone.</div>
+      <div class="nm-sec">Recipients</div>
+      <div class="nm-recip">${d.recipients.map((r) => `<label class="rc"><input type="checkbox" value="${esc(r.key)}" checked><span class="rc-box">
+        <span class="rc-top"><b>${esc(r.name)}</b><em>${esc(r.role)}</em></span><span class="rc-sub">${esc(r.location)} · ${esc(r.contact)} · <span class="mono">${esc(r.email)}</span></span>
+        <span class="rc-task">${esc(r.task)}</span></span></label>`).join("")}</div>
+      <div class="nm-sec">Message</div>
+      <label class="nm-field">Subject<input class="input" id="nm-subject" value="${esc(d.subject)}"></label>
+      <label class="nm-field">Body<textarea class="input" id="nm-text" rows="9">${esc(d.body)}</textarea></label>
+      <div class="nm-foot"><span class="muted small" id="nm-count"></span><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="nm-send">Send notification</button></div>`;
+    const count = () => { const n = $$("#notify-body .rc input:checked").length; $("#nm-count").textContent = `${n} of ${d.recipients.length} warehouse${d.recipients.length === 1 ? "" : "s"} selected`; $("#nm-send").disabled = !n; $("#nm-send").textContent = n > 1 ? `Send to ${n} warehouses` : "Send notification"; };
+    $$("#notify-body .rc input").forEach((i) => i.addEventListener("change", count)); count();
+    $("#nm-send").addEventListener("click", async () => {
+      const btn = $("#nm-send"); btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const res = await api("/api/notifications", { body: { consignment_id: cid, action_id: aid, recipients: $$("#notify-body .rc input:checked").map((i) => i.value), subject: $("#nm-subject").value, body: $("#nm-text").value } });
+        closeNotify(); await refresh();
+        toast(`Notification sent to ${res.recipients.length} warehouse${res.recipients.length === 1 ? "" : "s"}`);
+        const item = document.querySelector(`.act-item[data-key="${CSS.escape(k)}"]`); if (item) { item.classList.add("just-sent"); item.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      } catch (e) { btn.disabled = false; btn.textContent = "Send notification"; toast(e.message); }
+    });
+    setTimeout(() => $("#nm-send")?.focus(), 50);
+  }
+  function closeNotify() { const m = $("#notify-modal"); m.classList.remove("open"); m.setAttribute("aria-hidden", "true"); $("#modal-backdrop").classList.remove("open"); }
+  $("#notify-modal").addEventListener("click", (e) => { if (e.target.closest("[data-close]") || e.target === $("#notify-modal")) closeNotify(); });
+  $("#modal-backdrop").addEventListener("click", closeNotify);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeNotify(); });
 
   // ---------- globe ----------
   const SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
