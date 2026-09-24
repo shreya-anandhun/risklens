@@ -501,49 +501,111 @@
   function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true"); $("#drawer-backdrop").classList.remove("open"); }
   $("#drawer-close").addEventListener("click", closeDrawer); $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => e.key === "Escape" && closeDrawer());
-  function routeStrip(r) {
-    const j = r.journey || {};
-    return `<div><div class="route-strip">
-        <div class="pt"><b>${esc(r.origin_port || "—")}</b><span>${esc(r.origin_country || "")}${r.region ? " · " + esc(r.region) : ""}</span></div>
-        <div class="mid"><span class="mode">${esc(r.mode || "—")}</span><div class="line"></div>${r.route_via ? "via " + esc(r.route_via) : esc(r.carrier || "")}</div>
-        <div class="pt to"><b>${esc(r.destination_port || "—")}</b><span>${esc(r.destination_country || "")}${r.destination_region ? " · " + esc(r.destination_region) : ""}</span></div>
+  // Drawer = route journey diagram, score summary, option comparison and the alternatives table.
+  function laneGeometry(r) {
+    const g = state.overview?.geo?.routes?.[r.consignment_id]; if (!g) return null;
+    const pts = g.points, seg = []; let tot = 0;
+    for (let i = 0; i < pts.length - 1; i++) { const d = ang(pts[i], pts[i + 1]); seg.push(d); tot += d; }
+    const cum = [0]; seg.forEach((d) => cum.push(cum[cum.length - 1] + d));
+    const hot = (state.overview.geo.hotspots || []).filter((h) => h.lanes.includes(r.consignment_id)).map((h) => {
+      let best = 0, bd = Infinity; pts.forEach((p, i) => { const d = ang(p, [h.lat, h.lng]); if (d < bd) { bd = d; best = i; } });
+      const level = +r.inputs[h.factor] || 0;
+      return { ...h, t: tot ? cum[best] / tot : 0.5, level, band: levelBand(level) };
+    }).sort((x, y) => x.t - y.t);
+    return { g, km: Math.round(tot * 6371), hot };
+  }
+  function journeyHTML2(r) {
+    const j = r.journey || {}, geo = laneGeometry(r), c = BAND_COLOR[r.risk_band];
+    const W = 640, x0 = 56, x1 = 584, y = 64, X = (t) => x0 + (x1 - x0) * t;
+    const prog = j.status === "In transit" ? j.progress : j.status === "Arrived" ? 1 : 0;
+    const air = String(r.mode || "").toLowerCase() === "air";
+    const line = air ? `M${x0},${y} Q${(x0 + x1) / 2},${y - 46} ${x1},${y}` : `M${x0},${y} L${x1},${y}`;
+    // hotspot labels alternate above/below so they never collide
+    const hots = (geo?.hot || []).map((h, i) => {
+      const hx = X(Math.min(0.82, Math.max(0.18, h.t))), up = i % 2 === 0, hc = BAND_COLOR[h.band];
+      return `<g class="jd-hot" style="animation-delay:${0.35 + i * 0.12}s"><title>${esc(h.name)}: ${esc(FACTOR_NAME[h.factor])} ${h.level.toFixed(0)}</title>
+        <line x1="${hx}" x2="${hx}" y1="${y}" y2="${up ? y - 22 : y + 22}" stroke="${hc}" stroke-dasharray="2 2"/>
+        <path d="M${hx},${(up ? y - 34 : y + 22)} l7,12 h-14z" fill="${hc}" stroke="#fff" stroke-width="1.5"/>
+        <text x="${hx}" y="${up ? y - 40 : y + 48}" text-anchor="middle" class="jd-hl">${esc(h.name)}</text>
+        <text x="${hx}" y="${up ? y - 52 : y + 60}" text-anchor="middle" class="jd-hv" fill="${hc}">${esc(FACTOR_NAME[h.factor].replace(" index", ""))} ${h.level.toFixed(0)}</text></g>`;
+    }).join("");
+    const vx = air ? null : X(prog);
+    const vehicle = air ? "" : `<g class="jd-veh" style="--tx:${vx - x0}px"><circle cx="${x0}" cy="${y}" r="15" fill="${c}" opacity=".18" class="jd-pulse"/><circle cx="${x0}" cy="${y}" r="11" fill="${c}" stroke="#fff" stroke-width="2.5"/><g transform="translate(${x0 - 7},${y - 7}) scale(.58)" stroke="#fff" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ICONS[modeKey(r.mode)].replace(/<\/?svg[^>]*>/g, "")}</g></g>`;
+    const planeDot = air ? `<circle r="6" fill="${c}" stroke="#fff" stroke-width="2"><animateMotion dur="3.2s" repeatCount="indefinite" path="${line}"/></circle>` : "";
+    const statusTxt = j.status === "In transit" ? `Day ${j.elapsed_days} of ${j.total_days}` : j.status === "Scheduled" ? `departs in ${Math.max(0, j.days_to_eta - j.total_days)} days` : j.status || "";
+    return `<div class="jd card-lite">
+      <div class="jd-top"><span class="section-title" style="margin:0">Journey</span><span class="jd-status ${j.status === "In transit" ? "on" : ""}"><span class="jd-dot"></span>${esc(j.status || "Not dated")}${statusTxt ? " · " + esc(statusTxt) : ""}</span></div>
+      <svg class="jd-svg" viewBox="0 0 ${W} 132" role="img" aria-label="Journey from ${esc(r.origin_port || "")} to ${esc(r.destination_port || "")}">
+        <defs><linearGradient id="jdg" x1="0" x2="1"><stop offset="0" stop-color="${c}" stop-opacity=".9"/><stop offset="1" stop-color="${c}" stop-opacity=".55"/></linearGradient></defs>
+        <path d="${line}" fill="none" stroke="#E4E7EC" stroke-width="6" stroke-linecap="round"/>
+        <path d="${line}" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="1 7" stroke-linecap="round" class="jd-flow"/>
+        ${air ? "" : `<path d="M${x0},${y} L${vx},${y}" fill="none" stroke="url(#jdg)" stroke-width="6" stroke-linecap="round" class="jd-done" style="--len:${Math.max(1, vx - x0)}"/>`}
+        ${hots}
+        <g><circle cx="${x0}" cy="${y}" r="8" fill="#fff" stroke="#667085" stroke-width="2.5"/><circle cx="${x1}" cy="${y}" r="9" fill="${c}" stroke="#fff" stroke-width="3"/><circle cx="${x1}" cy="${y}" r="15" fill="none" stroke="${c}" stroke-width="1.5" class="jd-ring"/></g>
+        ${vehicle}${planeDot}
+        <text x="${x0}" y="${y + 30}" text-anchor="middle" class="jd-port">${esc(r.origin_port || "—")}</text>
+        <text x="${x0}" y="${y + 44}" text-anchor="middle" class="jd-sub">${esc(fmtDate(j.dispatch_date))}</text>
+        <text x="${x1}" y="${y + 30}" text-anchor="middle" class="jd-port">${esc(r.destination_port || "—")}</text>
+        <text x="${x1}" y="${y + 44}" text-anchor="middle" class="jd-sub">ETA ${esc(fmtDate(j.eta_date))}</text>
+      </svg>
+      <div class="jd-stats">
+        <div><span>Distance</span><b>${geo ? "≈ " + geo.km.toLocaleString() + " km" : "—"}</b></div>
+        <div><span>Transit</span><b>${j.total_days ? j.total_days + " days" : "—"}</b></div>
+        <div><span>Mode</span><b><span class="mode">${esc(r.mode || "—")}</span></b></div>
+        <div><span>Carrier</span><b>${esc(r.carrier || "—")}</b></div>
+        <div><span>Hotspots on route</span><b>${geo ? geo.hot.length : "—"}</b></div>
       </div>
-      <div class="route-meta"><div>Status<b>${esc(j.status || "—")}</b></div><div>Dispatch<b>${fmtDate(j.dispatch_date)}</b></div><div>ETA<b>${fmtDate(j.eta_date)}</b></div><div>Carrier<b>${esc(r.carrier || "—")}</b></div></div></div>`;
+    </div>`;
+  }
+  function scoreHTML(r) {
+    const c = BAND_COLOR[r.risk_band], best = r.best_alternative;
+    // piecewise scale so the Low and Elevated bands are readable: 0-12 → 0-25%, 12-30 → 25-50%, 30-100 → 50-100%
+    const pos = (v) => (v <= 12 ? (v / 12) * 25 : v <= 30 ? 25 + ((v - 12) / 18) * 25 : 50 + ((Math.min(100, v) - 30) / 70) * 50);
+    const bandText = { low: "Low risk: normal tracking", elevated: "Elevated: watch closely", high: "High: act before it slips" }[r.risk_band];
+    return `<div class="sh card-lite">
+      <div class="sh-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b class="sh-num" data-final="${r.risk_score.toFixed(1)}">${r.risk_score.toFixed(1)}</b><span>7-day risk</span></div></div>
+      <div class="sh-main">
+        <div class="sh-row">${chip(r.risk_band)}<span class="sh-band">${bandText}</span></div>
+        <div class="sh-scale">
+          <div class="sh-track"><span class="z low"></span><span class="z elevated"></span><span class="z high"></span></div>
+          <div class="sh-mark now" style="--x:${pos(r.risk_score)}%"><i style="background:${c}"></i><em>Now ${r.risk_score.toFixed(0)}</em></div>
+          ${best ? `<div class="sh-mark alt" style="--x:${pos(best.risk_score)}%"><i></i><em>With best option ${best.risk_score.toFixed(0)}</em></div>` : ""}
+          <div class="sh-ticks"><span style="left:0">0</span><span style="left:25%">12</span><span style="left:50%">30</span><span style="left:100%">100</span></div>
+        </div>
+        <div class="sh-stats">
+          <div><span>Cargo value</span><b>${fmtUSD(r.cargo_value_usd)}</b></div>
+          <div><span>Cost if disrupted</span><b>${fmtUSD(r.estimated_disruption_cost_usd)}</b></div>
+          <div><span>Expected loss (7 days)</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div>
+          <div><span>Confidence</span><b>${r.confidence.toFixed(0)}%</b><i class="sh-conf"><span style="--w:${r.confidence}%;width:${r.confidence}%"></span></i></div>
+        </div>
+      </div>
+    </div>`;
+  }
+  function compareHTML(r) {
+    const alts = r.alternatives || []; if (!alts.length) return "";
+    const rows = [{ title: "Current plan", risk: r.risk_score, band: r.risk_band, net: 0, cur: true }, ...alts.map((a) => ({ title: a.title, risk: a.risk_score, band: a.risk_band, net: a.net_benefit_usd, rec: a.recommended, delta: a.delta_risk, eta: a.eta_delta_days }))];
+    const maxNet = Math.max(1, ...rows.map((x) => Math.abs(x.net)));
+    return `<div class="cmp card-lite"><div class="section-title"><span>Compare options</span><span class="tag">risk after the change · net benefit</span></div>
+      <div class="cmp-head"><span></span><span>7-day risk</span><span>Net benefit</span></div>
+      ${rows.map((x, i) => `<div class="cmp-row ${x.cur ? "cur" : ""} ${x.rec ? "rec" : ""}" style="animation-delay:${0.08 * i}s">
+        <span class="cmp-t">${x.rec ? '<span class="star">★</span>' : ""}${esc(x.title)}${x.eta ? `<small>${days(x.eta)}</small>` : ""}</span>
+        <span class="cmp-risk"><span class="cmp-bar"><span style="--w:${Math.max(1.5, x.risk)}%;background:${BAND_COLOR[x.band]}"></span>${x.cur ? "" : `<i class="cmp-ghost" style="left:${r.risk_score}%"></i>`}</span><b style="color:${BAND_COLOR[x.band]}">${x.risk.toFixed(0)}</b>${x.cur ? "" : `<em class="${x.delta <= 0 ? "down" : "up"}">${x.delta > 0 ? "+" : ""}${x.delta.toFixed(0)}</em>`}</span>
+        <span class="cmp-net">${x.cur ? '<span class="tag">baseline</span>' : `<span class="cmp-div"><span class="${x.net >= 0 ? "pos" : "neg"}" style="--w:${(Math.abs(x.net) / maxNet) * 50}%"></span></span><b class="${x.net >= 0 ? "good" : "bad"}">${fmtUSD(x.net)}</b>`}</span>
+      </div>`).join("")}
+    </div>`;
+  }
+  function drawerHTML(r) {
+    return `${journeyHTML2(r)}${scoreHTML(r)}${compareHTML(r)}<div class="card-lite alt-wrap">${alternativesHTML(r, { applyable: true })}</div>`;
   }
   function renderDrawer(r) {
     $("#drawer-eyebrow").textContent = `${r.consignment_id} · ${r.cargo || ""}`;
     $("#drawer-title").textContent = routeText(r);
     $("#drawer-sub").textContent = `${r.supplier_name || ""}${r.product_category ? " · " + r.product_category : ""}`;
-    $("#drawer-body").innerHTML = `
-      ${routeStrip(r)}
-      <div id="drawer-result">${resultHTML(r, { applyable: true })}</div>
-      <div>
-        <div class="section-title"><span>Lane risk history</span><span class="tag">predicted 7-day risk vs. actual disruptions on this lane</span></div>
-        <div class="chart-wrap" style="height:180px"><canvas id="chart-history"></canvas></div>
-      </div>
-      <div>
-        <div class="section-title"><span>Edit consignment</span><span class="tag">score updates live · Save to keep changes</span></div>
-        <form id="edit-form" class="form-grid">${FIELDS.map((f) => fieldHTML(f, r.record)).join("")}
-          <div class="span-2 form-actions"><button type="submit" class="btn btn-primary">Save changes</button><button type="button" class="btn btn-danger" id="btn-delete">Remove consignment</button><span class="muted" id="edit-status"></span></div>
-        </form>
-      </div>`;
-    historyChart(r.history);
+    const body = $("#drawer-body");
+    body.innerHTML = `<div id="drawer-result" class="drawer-stack">${drawerHTML(r)}</div>`;
+    body.scrollTop = 0;
+    const num = body.querySelector(".sh-num"); if (num) countUp(num, num.dataset.final);
     bindApply(r.consignment_id);
-    const form = $("#edit-form");
-    form.addEventListener("input", debounce(async () => {
-      $("#edit-status").textContent = "Re-scoring…";
-      try { const res = await api("/api/score", { body: { ...formToRecord(form), consignment_id: r.consignment_id } }); res.applied_alternative = r.applied_alternative; $("#drawer-result").innerHTML = resultHTML(res); $("#edit-status").textContent = "Unsaved changes"; clearErrors(form); }
-      catch (e) { $("#edit-status").textContent = ""; showErrors(form, e); }
-    }, 350));
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      try { const res = await api(`/api/consignments/${encodeURIComponent(r.consignment_id)}`, { method: "PUT", body: formToRecord(form) }); await refresh(); toast(`Saved ${res.consignment_id} · risk ${res.risk_score.toFixed(1)}`); openDrawer(r.consignment_id); }
-      catch (e) { showErrors(form, e); }
-    });
-    $("#btn-delete").addEventListener("click", async () => {
-      if (!confirm(`Remove ${r.consignment_id} from the consignment book?`)) return;
-      await api(`/api/consignments/${encodeURIComponent(r.consignment_id)}`, { method: "DELETE" }); closeDrawer(); await refresh(); toast(`Removed ${r.consignment_id}`);
-    });
   }
   function bindApply(cid) {
     $$("#drawer-result [data-apply]").forEach((b) => b.addEventListener("click", async () => {
@@ -553,14 +615,7 @@
       catch (e) { toast(e.message); }
     }));
   }
-  function historyChart(h) {
-    const ctx = $("#chart-history"); if (!ctx) return; state.charts.h?.destroy();
-    if (!h?.length) { ctx.parentElement.innerHTML = `<div class="empty small">No lane history for this consignment yet.</div>`; return; }
-    state.charts.h = new Chart(ctx, { data: { labels: h.map((d) => fmtDate(d.date)), datasets: [
-      { type: "line", label: "Predicted 7-day risk %", data: h.map((d) => d.pred), borderColor: "#0F4C81", backgroundColor: "rgba(15,76,129,.08)", fill: true, tension: .3, pointRadius: 0, borderWidth: 2 },
-      { type: "bar", label: "Disruption on lane", data: h.map((d) => (d.disrupted ? 100 : 0)), backgroundColor: "rgba(185,28,28,.45)", barPercentage: .6 } ] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksLimit: 6, font: { size: 10 } }, grid: { display: false } }, y: { min: 0, max: 100, ticks: { font: { size: 10 } } } } } });
-  }
+
   document.addEventListener("click", (e) => { const t = e.target.closest("[data-open]"); if (t) { e.preventDefault(); openDrawer(t.dataset.open); } });
 
   // ---------- what-if ----------
