@@ -526,17 +526,7 @@
   }
 
   // ---------- result rendering ----------
-  const INPUT_SUMMARY = {
-    reliability_risk: (i) => `on-time rate ${fmtN(i.reliability_score, 2)}`,
-    lead_time_risk: (i) => `${fmtN(i.lead_time_days, 0)} days`,
-    lead_time_variability: (i) => `±${fmtN(i.lead_time_std_days)} days on ${fmtN(i.lead_time_days, 0)}`,
-    geopolitical_risk: (i) => `index ${fmtN(i.geopolitical_risk_index)}${i.port_congestion_index != null ? ` · port ${fmtN(i.port_congestion_index)}` : ""}`,
-    weather_risk: (i) => (i.weather_risk_index != null ? `index ${fmtN(i.weather_risk_index)}` : `level ${i.weather_risk_level || "—"}`),
-    price_volatility: (i) => `${fmtN(i.price_swing_pct)}% swing / 30 days`,
-    disruption_recency: (i) => (i.days_since_last_disruption == null || i.days_since_last_disruption >= 999 ? "none on record" : `${fmtN(i.days_since_last_disruption, 0)} days ago`),
-  };
   function fmtN(v, d = 1) { return v == null || v === "" ? "—" : (+v).toFixed(d); }
-
   function alternativesHTML(r, { applyable }) {
     if (!r.alternatives) return "";
     const cur = `<tr class="current"><td><div class="alt-title">Current plan${r.applied_alternative ? '<span class="badge-applied">updated</span>' : ""}</div><div class="alt-desc">${esc(r.mode || "")} · ${esc(r.carrier || "carrier not set")} · ${esc(routeText(r))}${r.route_via ? ` via ${esc(r.route_via)}` : ""}</div></td><td class="num"><b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></td><td class="num">—</td><td class="num">—</td><td class="num">${fmtUSD(r.expected_loss_usd)}</td><td class="num">—</td>${applyable ? "<td></td>" : ""}</tr>`;
@@ -552,39 +542,6 @@
       <div class="table-wrap"><table class="alt-table"><thead><tr><th>Option</th><th class="num">Risk</th><th class="num">ETA</th><th class="num">Extra cost</th><th class="num">Exp. loss</th><th class="num">Net benefit</th>${applyable ? "<th></th>" : ""}</tr></thead><tbody>${cur}${rows || ""}</tbody></table></div>
       ${r.alternatives.length ? "" : '<div class="muted small" style="margin-top:8px">No other alternatives on file for this consignment.</div>'}
       <div class="muted small" style="margin-top:8px">Net benefit = expected loss avoided − extra cost. A negative value means the option costs more than the risk it removes.</div></div>`;
-  }
-
-  function resultHTML(r, { applyable = false } = {}) {
-    const color = BAND_COLOR[r.risk_band]; const maxAbs = Math.max(0.05, ...r.factors.map((f) => Math.abs(f.contribution)));
-    const bandText = { low: "Low risk: normal tracking", elevated: "Elevated: watch closely", high: "High: act before it slips" }[r.risk_band];
-    return `
-      <div class="score-hero">
-        <div class="dial" style="background:conic-gradient(${color} ${r.risk_score * 3.6}deg, #EEF0F3 0)"><div class="dv"><b style="color:${color}">${r.risk_score.toFixed(1)}</b><span>7-day risk</span></div></div>
-        <div class="hero-stats">
-          <div>Status<b>${chip(r.risk_band)}</b><span class="tag">${bandText}</span></div>
-          <div>Confidence<b>${r.confidence.toFixed(0)}%</b></div>
-          <div>Weighted index<b>${r.composite_index.toFixed(1)} / 100</b></div>
-          <div>Cargo value<b>${fmtUSD(r.cargo_value_usd)}</b></div>
-          <div>Cost if disrupted<b>${fmtUSD(r.estimated_disruption_cost_usd)}</b></div>
-          <div>Expected loss (7 days)<b style="color:${r.expected_loss_usd > 0 ? "var(--high)" : "inherit"}">${fmtUSD(r.expected_loss_usd)}</b></div>
-        </div>
-      </div>
-      ${alternativesHTML(r, { applyable })}
-      <div>
-        <div class="section-title"><span>Risk parameters</span><span class="tag">how each parameter moves this score</span></div>
-        <table class="factor-table"><thead><tr><th>Parameter</th><th style="width:26%">Risk level (0–1)</th><th class="num">Weight</th><th style="width:22%">Effect on score</th><th class="num">Δ</th></tr></thead><tbody>
-        ${r.factors.map((f) => `<tr><td><div style="font-weight:500"><span class="param-name" title="${esc(f.formula)}">${esc(f.label)}</span></div><div class="tag">${esc(INPUT_SUMMARY[f.key]?.(r.inputs) || "")}</div></td><td><div class="ftrack"><div class="ffill" style="width:${f.value * 100}%;background:${heatColor(f.value)}"></div></div><div class="tag">${f.value.toFixed(2)}</div></td><td class="num">${(f.weight * 100).toFixed(0)}%</td><td><div class="contrib"><div class="l">${f.contribution < 0 ? `<span style="width:${(Math.abs(f.contribution) / maxAbs) * 100}%"></span>` : ""}</div><div class="r">${f.contribution > 0 ? `<span style="width:${(f.contribution / maxAbs) * 100}%"></span>` : ""}</div></div></td><td class="contrib-val ${f.contribution > 0 ? "pos" : "neg"}">${f.contribution > 0 ? "+" : ""}${f.contribution.toFixed(2)}</td></tr>`).join("")}
-        </tbody></table>
-        <details class="calc"><summary>How is this score calculated?</summary>
-          <p>Each input is converted to a risk level between 0 (safe) and 1 (riskiest) using the formulas below. The seven levels go into an XGBoost model trained on historical lane data, which returns the probability of a disruption in the next 7 days. Red bars push the score up and green bars pull it down. The weighted index is a simple weighted sum of the same seven levels, shown for reference.</p>
-          <dl>${r.factors.map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.formula)}</dd>`).join("")}</dl>
-          <p>Bands: Low below ${state.meta.risk_bands[1].min}, Elevated ${state.meta.risk_bands[1].min}–${state.meta.risk_bands[2].min}, High ${state.meta.risk_bands[2].min} and above.</p>
-        </details>
-      </div>
-      <div>
-        <div class="section-title"><span>Mitigations</span><span class="tag">risk after all mitigations ≈ ${r.residual_risk_score.toFixed(1)}</span></div>
-        <div class="action-list">${r.recommendations.map((a) => `<div class="action rec"><div class="a-title">${esc(a.action)} <span class="cost-band">${esc(a.cost_band)} cost</span></div><div class="a-sub">${esc(a.rationale)}</div><div class="a-cost"><span>Why <b>${esc(a.trigger)}</b></span><span>When <b>${esc(a.timeline)}</b></span><span>Cost <b>${fmtUSD(a.cost_usd)}</b></span><span>Loss avoided <b>${fmtUSD(a.benefit_usd)}</b></span><span>Net <b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b></span><span>Risk reduction <b>${(a.risk_reduction * 100).toFixed(0)}%</b></span></div></div>`).join("")}</div>
-      </div>`;
   }
 
   // ---------- drawer ----------
@@ -834,15 +791,49 @@
   document.addEventListener("click", (e) => { const t = e.target.closest("[data-cargo]"); if (t) { e.preventDefault(); openCargo(t.dataset.cargo); } });
 
   // ---------- what-if ----------
-  const WHATIF_DEFAULTS = { cargo: "Lithium battery cells", supplier_name: "Shenzhen Boards", product_category: "Electronics", mode: "Sea", carrier: "Pacific Arc Lines", single_source: "1", units: 20000, average_cost_per_unit: 95, origin_port: "Shenzhen", origin_country: "China", region: "East Asia", destination_port: "Felixstowe", destination_country: "United Kingdom", destination_region: "Europe", lead_time_days: 45, lead_time_std_days: 8, reliability_score: 0.84, geopolitical_risk_index: 48, port_congestion_index: 55, weather_risk_level: "medium", price_swing_pct: 9 };
+  // ---------- what-if (one page: CSV on top, a compact single check below) ----------
+  const WI_FIELDS = [
+    ["cargo", "Consignment / cargo", "text", { placeholder: "e.g. Lithium battery cells" }],
+    ["origin_port", "From", "text", {}], ["destination_port", "To", "text", {}],
+    ["mode", "Mode", "select", opt(MODES)], ["lead_time_days", "Lead time (days)", "number", { min: 1, max: 365 }],
+    ["reliability_score", "Carrier on-time rate (0–1)", "number", { min: 0, max: 1, step: "any" }],
+    ["geopolitical_risk_index", "Geopolitical index (0–100)", "number", { min: 0, max: 100, step: "any" }],
+    ["weather_risk_level", "Weather risk", "select", ["low:Low", "medium:Medium", "high:High"]],
+    ["cargo_value", "Cargo value (USD)", "number", { min: 0, step: "any" }],
+  ];
+  const WI_DEFAULTS = { cargo: "Lithium battery cells", origin_port: "Shenzhen", destination_port: "Felixstowe", mode: "Sea", lead_time_days: 45, reliability_score: 0.84, geopolitical_risk_index: 48, weather_risk_level: "medium", cargo_value: 1900000 };
+  function wiRecord(form) {
+    const o = formToRecord(form);
+    // Cargo value is entered as one figure; store it as 1,000 units so it stays inside the per-unit limit.
+    if (o.cargo_value != null) { o.units = 1000; o.average_cost_per_unit = +o.cargo_value / 1000; delete o.cargo_value; }
+    if (!o.supplier_name) o.supplier_name = o.cargo || "Planned consignment";
+    return o;
+  }
+  function wiResultHTML(r, label) {
+    const c = BAND_COLOR[r.risk_band], best = r.best_alternative;
+    const drivers = r.factors.filter((f) => f.contribution > 0).slice(0, 3);
+    const maxC = Math.max(0.05, ...drivers.map((f) => f.contribution));
+    const bandText = { low: "Low risk: normal tracking", elevated: "Elevated: watch closely", high: "High: act before it slips" }[r.risk_band];
+    return `<div class="wr">
+      <div class="wr-top">${label ? `<span class="eyebrow">${esc(label)}</span>` : ""}</div>
+      <div class="wr-head">
+        <div class="sh-dial wr-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b>${r.risk_score.toFixed(1)}</b><span>7-day risk</span></div></div>
+        <div class="wr-kpis"><div class="wr-band">${chip(r.risk_band)}<span>${bandText}</span></div>
+          <div class="wr-nums"><div><span>Expected loss (7 days)</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div><div><span>Cargo value</span><b>${fmtUSD(r.cargo_value_usd)}</b></div></div></div>
+      </div>
+      <div class="wr-sec">What drives the risk</div>
+      ${drivers.length ? drivers.map((f) => `<div class="wr-drv"><span>${esc(f.label)}</span><i><em style="--w:${(f.contribution / maxC) * 100}%"></em></i><b>${f.value.toFixed(2)}</b></div>`).join("") : `<div class="muted small">No parameter is pushing the risk up.</div>`}
+      <div class="wr-best ${best ? "yes" : ""}">${best ? `<span class="wb-k">Best option</span><b>${esc(best.title)}</b><span>Risk ${r.risk_score.toFixed(0)} → ${best.risk_score.toFixed(0)} · saves ${fmtUSD(best.net_benefit_usd)}</span>` : `<span class="wb-k">Best option</span><b>Keep the current plan</b><span>No alternative saves more than it costs</span>`}</div>
+    </div>`;
+  }
   function initWhatIf() {
     const f = $("#score-form");
-    f.innerHTML = FIELDS.map((x) => fieldHTML(x, WHATIF_DEFAULTS)).join("") + `<div class="span-2 form-actions"><button type="submit" class="btn btn-primary">Assess risk</button><button type="button" class="btn btn-secondary" id="btn-save-form">Add to consignments</button><span class="muted" id="form-status"></span></div>`;
-    const run = async () => { try { const res = await api("/api/score", { body: formToRecord(f) }); $("#score-result").innerHTML = resultHTML(res); clearErrors(f); $("#form-status").textContent = ""; } catch (e) { showErrors(f, e); } };
+    f.innerHTML = WI_FIELDS.map((x) => fieldHTML(x, WI_DEFAULTS)).join("") + `<div class="wi-actions"><button type="submit" class="btn btn-primary">Assess risk</button><button type="button" class="btn btn-secondary" id="btn-save-form">Add to consignments</button><span class="muted small" id="form-status"></span></div>`;
+    const run = async () => { try { const res = await api("/api/score", { body: wiRecord(f) }); $("#score-result").innerHTML = wiResultHTML(res); clearErrors(f); $("#form-status").textContent = ""; } catch (e) { showErrors(f, e); } };
     f.addEventListener("submit", (e) => { e.preventDefault(); run(); });
     f.addEventListener("input", debounce(run, 400));
     $("#btn-save-form").addEventListener("click", async () => {
-      try { const res = await api("/api/consignments", { method: "POST", body: formToRecord(f) }); await refresh(); toast(`Added ${res.consignment_id} to consignments`); $("#form-status").innerHTML = `Saved as <a href="#" data-open="${esc(res.consignment_id)}" class="mono">${esc(res.consignment_id)}</a>`; }
+      try { const res = await api("/api/consignments", { method: "POST", body: wiRecord(f) }); await refresh(); toast(`Added ${res.consignment_id} to consignments`); $("#form-status").innerHTML = `Saved as <span class="mono">${esc(res.consignment_id)}</span>`; }
       catch (e) { showErrors(f, e); }
     });
     run();
@@ -852,34 +843,38 @@
   // ---------- csv ----------
   const dz = $("#dropzone"), fi = $("#csv-input");
   $("#csv-browse").addEventListener("click", () => fi.click());
-  fi.addEventListener("change", () => fi.files[0] && uploadCsv(fi.files[0]));
+  dz.addEventListener("click", (e) => { if (!e.target.closest("button")) fi.click(); });
+  fi.addEventListener("change", () => { if (fi.files[0]) uploadCsv(fi.files[0]); fi.value = ""; });
   ["dragenter", "dragover"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("over"); }));
   ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("over"); }));
   dz.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) uploadCsv(f); });
   async function uploadCsv(file) {
-    const out = $("#csv-result"); out.innerHTML = `<div class="alert ok">Checking ${esc(file.name)}…</div>`;
+    const out = $("#csv-result"); out.innerHTML = `<div class="csv-bar"><span class="muted">Checking ${esc(file.name)}…</span></div>`;
     const fd = new FormData(); fd.append("file", file);
     try {
       const r = await api("/api/score/csv", { method: "POST", body: fd });
-      let html = "";
-      if (r.errors.some((e) => e.row === null)) html += r.errors.map((e) => `<div class="alert error">${esc(e.message)}</div>`).join("");
-      else html += `<div class="alert ${r.errors.length ? "warn" : "ok"}">Scored ${r.rows_scored} of ${r.rows_total} rows from ${esc(r.filename)}.${r.errors.length ? ` ${r.errors.length} problem(s) listed below.` : ""}</div>`;
-      html += r.warnings.map((w) => `<div class="alert warn">${esc(w)}</div>`).join("");
-      const rowErrs = r.errors.filter((e) => e.row !== null);
-      if (rowErrs.length) html += `<div class="table-wrap" style="margin-top:12px"><table class="table"><thead><tr><th>Line</th><th>Field</th><th>Problem</th></tr></thead><tbody>${rowErrs.map((e) => `<tr><td class="mono">${e.row}</td><td class="mono">${esc(e.field)}</td><td>${esc(e.message)}</td></tr>`).join("")}</tbody></table></div>`;
-      if (r.results.length) {
-        const s = r.summary;
-        html += `<div class="csv-summary"><span class="kpi-label">Batch summary</span><span>${chip("high")} ${s.bands.high}</span><span>${chip("elevated")} ${s.bands.elevated}</span><span>${chip("low")} ${s.bands.low}</span><span class="muted">Value at risk ${fmtUSD(s.value_at_risk_usd)} · Expected loss ${fmtUSD(s.expected_loss_usd)}</span><span style="margin-left:auto" class="btn-row"><button class="btn btn-secondary btn-sm" id="csv-add">Add to consignments</button><button class="btn btn-secondary btn-sm" id="csv-download">Download results</button></span></div>`;
-        html += `<div class="table-wrap"><table class="table"><thead><tr><th>Consignment</th><th>Route</th><th class="num">Risk score</th><th>Band</th><th>Main driver</th><th>Best alternative</th><th class="num">Expected loss</th></tr></thead><tbody>${r.results.map((x, i) => `<tr class="clickable" data-csv="${i}"><td><div class="cid">${esc(x.consignment_id || "—")}</div><div class="sub">${esc(x.cargo || x.supplier_name || "")}</div></td><td>${route(x)}</td><td class="num">${scoreBar(x)}</td><td>${chip(x.risk_band)}</td><td>${x.top_driver ? esc(x.top_driver.label) : "—"}</td><td class="alt-cell">${altCell(x)}</td><td class="num">${fmtUSD(x.expected_loss_usd)}</td></tr>`).join("")}</tbody></table></div><div id="csv-detail"></div>`;
-      }
+      const fileErr = r.errors.filter((e) => e.row === null), rowErrs = r.errors.filter((e) => e.row !== null);
+      if (fileErr.length) { out.innerHTML = fileErr.map((e) => `<div class="alert error">${esc(e.message)}</div>`).join(""); return; }
+      const s = r.summary;
+      let html = `<div class="csv-bar"><span class="csv-file">${esc(r.filename)}</span><span>Scored <b>${r.rows_scored}</b> of ${r.rows_total}</span>`;
+      if (s) html += `<span>${chip("high")} ${s.bands.high}</span><span>${chip("elevated")} ${s.bands.elevated}</span><span>${chip("low")} ${s.bands.low}</span><span class="muted">Expected loss ${fmtUSD(s.expected_loss_usd)}</span>`;
+      if (rowErrs.length) html += `<span class="csv-warn" title="${esc(rowErrs.map((e) => `Line ${e.row}: ${e.message}`).join("\n"))}">⚠ ${rowErrs.length} row problem${rowErrs.length > 1 ? "s" : ""}</span>`;
+      html += `<span class="csv-btns">${r.results.length ? `<button class="btn btn-secondary btn-sm" id="csv-add">Add to consignments</button><button class="btn btn-secondary btn-sm" id="csv-download">Download results</button>` : ""}<button class="btn btn-ghost btn-sm" id="csv-clear">Clear</button></span></div>`;
+      html += `<div class="csv-list">`;
+      html += rowErrs.map((e) => `<div class="csv-row err"><span class="mono">Line ${e.row}</span><span class="mono">${esc(e.field)}</span><span>${esc(e.message)}</span></div>`).join("");
+      html += r.results.map((x, i) => `<div class="csv-row" data-csv="${i}" role="button" tabindex="0"><span class="mono cid">${esc(x.consignment_id || x.supplier_name || "—")}</span><span>${route(x)}</span><span class="csv-score" style="color:${BAND_COLOR[x.risk_band]}">${x.risk_score.toFixed(0)}</span>${chip(x.risk_band)}<span class="muted">${x.top_driver ? esc(x.top_driver.label) : "—"}</span><span class="num">${fmtUSD(x.expected_loss_usd)}</span></div>`).join("");
+      html += `</div>`;
       out.innerHTML = html;
+      $("#csv-clear").addEventListener("click", () => { out.innerHTML = ""; });
       $("#csv-add")?.addEventListener("click", async () => { const a = await api("/api/consignments/import", { body: { records: r.records } }); await refresh(); toast(a.added ? `Added ${a.added} consignment(s)` : "Nothing added: those consignment IDs already exist"); });
       $("#csv-download")?.addEventListener("click", () => {
-        const cols = ["consignment_id", "route", "risk_score", "risk_band", "expected_loss_usd", "main_driver", "best_alternative", "mitigations"];
-        const lines = [cols.join(",")].concat(r.results.map((x) => [x.consignment_id || "", routeText(x), x.risk_score, x.risk_band, x.expected_loss_usd, x.top_driver ? x.top_driver.label : "", x.best_alternative ? x.best_alternative.title : "", x.recommendations.map((a) => a.action).join(" | ")].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")));
+        const cols = ["consignment_id", "route", "risk_score", "risk_band", "expected_loss_usd", "main_driver", "best_alternative"];
+        const lines = [cols.join(",")].concat(r.results.map((x) => [x.consignment_id || "", routeText(x), x.risk_score, x.risk_band, x.expected_loss_usd, x.top_driver ? x.top_driver.label : "", x.best_alternative ? x.best_alternative.title : ""].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")));
         const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "risklens_batch_results.csv"; a.click();
       });
-      out.onclick = (e) => { const tr = e.target.closest("[data-csv]"); if (!tr) return; const x = r.results[+tr.dataset.csv]; $("#csv-detail").innerHTML = `<div class="divider"></div><div class="section-title"><span>${esc(x.consignment_id || "")} · ${esc(routeText(x))}</span></div>${resultHTML(x)}`; $("#csv-detail").scrollIntoView({ behavior: "smooth", block: "start" }); };
+      const pick = (el) => { const x = r.results[+el.dataset.csv]; $$("#csv-result .csv-row").forEach((q) => q.classList.toggle("on", q === el)); $("#score-result").innerHTML = wiResultHTML(x, `From ${r.filename} · ${x.consignment_id || x.supplier_name || ""}`); };
+      out.onclick = (e) => { const el = e.target.closest("[data-csv]"); if (el) pick(el); };
+      out.onkeydown = (e) => { const el = e.target.closest("[data-csv]"); if (el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pick(el); } };
     } catch (e) { out.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
 

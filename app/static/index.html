@@ -118,18 +118,21 @@
 
     <!-- WHAT-IF -->
     <section class="view" id="view-whatif">
-      <div class="grid-1-1 analyze-grid">
-        <div class="card">
-          <div class="card-head"><div><h2>Plan a consignment</h2><p class="muted">Enter a planned or hypothetical consignment. Risk, mitigations and alternatives update as you type.</p></div></div>
-          <form id="score-form" class="form-grid" autocomplete="off"></form>
+      <div class="card wi-csv">
+        <div class="wi-csv-row">
+          <div class="wi-csv-txt"><h2>Check a batch from CSV</h2><p class="muted">Upload a list of consignments. Problem rows are reported by line and field; valid rows are still scored.</p></div>
+          <div class="dropzone slim" id="dropzone"><input type="file" id="csv-input" accept=".csv,text/csv" hidden>
+            <span class="dz-ic" aria-hidden="true">⇪</span><span class="dz-t"><span><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button></span><small>Needs consignment_id, lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level</small></span></div>
+          <a class="btn btn-secondary" href="/api/template.csv">Download template</a>
         </div>
-        <div class="card" id="score-result"><div class="empty">Enter consignment details to see the risk assessment.</div></div>
-      </div>
-      <div class="card">
-        <div class="card-head"><div><h2>Check a batch from CSV</h2><p class="muted">Upload a list of consignments. Rows with problems are reported by line and field; valid rows are still scored.</p></div>
-          <div class="btn-row"><a class="btn btn-secondary" href="/api/template.csv">Download template</a></div></div>
-        <div class="dropzone" id="dropzone"><input type="file" id="csv-input" accept=".csv,text/csv" hidden><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button><div class="muted small">Required: consignment_id (or supplier_name), lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level</div></div>
         <div id="csv-result"></div>
+      </div>
+      <div class="wi-main">
+        <div class="card wi-form-card">
+          <div class="card-head"><div><h2>Or check one consignment</h2><p class="muted">The same inputs the CSV asks for. The score updates as you type.</p></div></div>
+          <form id="score-form" class="wi-form" autocomplete="off"></form>
+        </div>
+        <div class="card wi-result" id="score-result"><div class="empty">Enter consignment details to see the risk.</div></div>
       </div>
     </section>
   </main>
