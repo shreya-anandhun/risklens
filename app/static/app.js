@@ -209,7 +209,7 @@
     alert: SVG('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
   };
   const modeKey = (m) => ({ sea: "sea", air: "air", road: "road", rail: "rail" }[String(m || "").toLowerCase()] || "sea");
-  const RGB = { low: "34,197,94", elevated: "251,146,60", high: "248,64,64" };  // bright enough to read on satellite imagery
+  const RGB = { low: "22,163,74", elevated: "234,88,12", high: "220,38,38" };  // deep enough to read on the light-ocean imagery
   const FACTOR_NAME = { weather_risk_index: "Weather index", geopolitical_risk_index: "Geopolitical index", port_congestion_index: "Port congestion" };
   const SITUATION = {
     weather_risk: "Severe weather risk along the lane", geopolitical_risk: "Elevated geopolitical and customs risk on the corridor",
@@ -385,8 +385,8 @@
     const D = buildGlobeData(); G.data = D;
     const alpha = (d, a) => (d.on && (!G.focus || d.r.consignment_id === G.focus) ? a : a * 0.12);
     g.pathsData(D.paths).arcsData(D.arcs).ringsData(D.rings.filter((x) => x.on)).htmlElementsData(D.markers);
-    g.pathColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.6)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.2)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
-    g.arcColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.55)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.15)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    g.pathColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.8)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.2)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
+    g.arcColor((d) => (d.kind === "base" ? `rgba(${RGB[d.r.risk_band]},${alpha(d, 0.75)})` : [`rgba(${RGB[d.r.risk_band]},${alpha(d, 0.15)})`, `rgba(${RGB[d.r.risk_band]},${alpha(d, 1)})`]));
     // lists
     $("#gp-count").textContent = `${D.rows.filter((r) => G.band === "all" || r.risk_band === G.band).length} of ${D.rows.length}`;
     $("#globe-list").innerHTML = D.rows.map((r) => `<div class="gp-item ${G.focus === r.consignment_id ? "on" : ""} ${G.band !== "all" && r.risk_band !== G.band ? "off" : ""}" data-focus="${esc(r.consignment_id)}" role="button" tabindex="0" title="Fly to ${esc(routeText(r))}">
@@ -415,8 +415,8 @@
       try { g = new Globe(el, { animateIn: true }); } catch (e) { g = Globe({ animateIn: true })(el); }
       G.g = g;
       g.width(el.clientWidth).height(el.clientHeight).backgroundColor("rgba(0,0,0,0)")
-        .globeImageUrl("/static/vendor/earth/earth-blue-marble.jpg").bumpImageUrl("/static/vendor/earth/earth-topology.png")
-        .showAtmosphere(true).atmosphereColor("#8EC5FF").atmosphereAltitude(0.15)
+        .globeImageUrl("/static/vendor/earth/earth-light-ocean.jpg").bumpImageUrl("/static/vendor/earth/earth-topology.png")
+        .showAtmosphere(true).atmosphereColor("#9CC8F0").atmosphereAltitude(0.16)
         .polygonsData(land).polygonAltitude(0.0012).polygonCapColor(() => "rgba(0,0,0,0)").polygonSideColor(() => "rgba(0,0,0,0)")
         .polygonStrokeColor(() => (G.near ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.14)")).polygonsTransitionDuration(0)
         .pathPoints("points").pathPointLat((p) => p[0]).pathPointLng((p) => p[1]).pathPointAlt(0.006).pathResolution(2)
@@ -440,6 +440,46 @@
       ctr.addEventListener("start", () => { clearTimeout(G.idle); ctr.autoRotate = false; hideTip(); });
       ctr.addEventListener("end", scheduleResume);
       ctr.addEventListener("change", declutter);
+      // Grab-and-drag (Google Earth style): the point under the cursor stays under the cursor,
+      // and the globe coasts briefly on release. OrbitControls keeps zoom and pinch.
+      ctr.enableRotate = false;
+      const drag = { on: false, x: 0, y: 0, vx: 0, vy: 0, t: 0, raf: 0, pointers: new Set() };
+      const degPerPx = () => {
+        const cam = g.camera(), R = 100, d = cam.position.length(), half = (cam.fov * Math.PI) / 360;
+        const rpx = (R / Math.sqrt(Math.max(1, d * d - R * R))) / Math.tan(half) * (el.clientHeight / 2);
+        return (180 / Math.PI) / Math.max(20, rpx);
+      };
+      const spin = (dx, dy) => {
+        const k = degPerPx(), p = g.pointOfView();
+        g.pointOfView({ lat: Math.max(-85, Math.min(85, p.lat + dy * k)), lng: p.lng - dx * k, altitude: p.altitude }, 0);
+        declutter();
+      };
+      const onMove = (e) => {
+        if (!drag.on || drag.pointers.size > 1) return;
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y, now = performance.now(), dt = Math.max(1, now - drag.t);
+        drag.x = e.clientX; drag.y = e.clientY; drag.t = now;
+        drag.vx = 0.75 * drag.vx + 0.25 * (dx / dt); drag.vy = 0.75 * drag.vy + 0.25 * (dy / dt);
+        if (dx || dy) spin(dx, dy);
+      };
+      const onUp = (e) => {
+        drag.pointers.delete(e.pointerId);
+        if (!drag.on || drag.pointers.size) return;
+        drag.on = false; el.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); window.removeEventListener("pointercancel", onUp);
+        let vx = drag.vx * 16, vy = drag.vy * 16;
+        if (performance.now() - drag.t > 90 || matchMedia("(prefers-reduced-motion: reduce)").matches) vx = vy = 0;
+        const coast = () => { if (Math.abs(vx) < 0.05 && Math.abs(vy) < 0.05) { scheduleResume(); return; } spin(vx, vy); vx *= 0.92; vy *= 0.92; drag.raf = requestAnimationFrame(coast); };
+        coast();
+      };
+      el.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || e.target.closest(".gm")) return;
+        drag.pointers.add(e.pointerId);
+        if (drag.pointers.size > 1) return; // second finger: let OrbitControls pinch-zoom
+        cancelAnimationFrame(drag.raf);
+        Object.assign(drag, { on: true, x: e.clientX, y: e.clientY, vx: 0, vy: 0, t: performance.now() });
+        clearTimeout(G.idle); ctr.autoRotate = false; hideTip(); el.classList.add("dragging");
+        window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp); window.addEventListener("pointercancel", onUp);
+      });
       g.pointOfView({ lat: 18, lng: 30, altitude: 2.35 });
       stage.addEventListener("mousemove", (e) => { const b = stage.getBoundingClientRect(); G.mouse = [e.clientX - b.left, e.clientY - b.top]; placeTip(); });
       stage.addEventListener("mouseleave", hideTip);
