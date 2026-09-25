@@ -16,7 +16,7 @@ from risklens.geo import geo_payload
 from risklens.cargo import profile as cargo_profile
 from risklens import notify
 from risklens.config import COMPANY, DATA_PROCESSED, DATA_RAW, FEATURE_KEYS, FEATURES, HORIZON_DAYS, RISK_BANDS
-from risklens.predictor import apply_changes, load_model, portfolio_summary, score_records
+from risklens.predictor import apply_changes, load_model, portfolio_summary, predict_proba, score_records
 from risklens.validation import OPTIONAL, REQUIRED, validate_dataframe, validate_record
 
 STATIC = Path(__file__).parent / "static"
@@ -40,7 +40,7 @@ def lane_history() -> dict:
     7-day risk alongside the disruptions that actually happened."""
     model, _ = load_model()
     feats = pd.read_csv(DATA_PROCESSED / "supply_chain_features.csv")
-    feats["pred"] = model.predict_proba(feats[FEATURE_KEYS])[:, 1] * 100
+    feats["pred"] = predict_proba(model, feats) * 100
     per_lane = {
         sid: g[["date", "pred", "disrupted"]].round(1).to_dict("records")
         for sid, g in feats.groupby("supplier_id")

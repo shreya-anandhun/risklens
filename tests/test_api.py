@@ -170,3 +170,21 @@ def test_warehouse_notifications_and_impact(client):
     assert client.post("/api/notifications", json={"consignment_id": a["consignment_id"], "action_id": a["id"], "recipients": ["zzz"]}).status_code == 422
     client.post("/api/consignments/reset")
     assert client.get("/api/notifications").json() == []
+
+
+def test_serving_does_not_need_scikit_learn():
+    # scikit-learn is a training-only dependency; the deployed app does not install it.
+    import subprocess, sys
+    code = (
+        "import sys, importlib.abc\n"
+        "class Hide(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, name, path, target=None):\n"
+        "        if name == 'sklearn' or name.startswith('sklearn.'): raise ImportError(name)\n"
+        "sys.meta_path.insert(0, Hide())\n"
+        "from fastapi.testclient import TestClient\n"
+        "from app.main import app\n"
+        "c = TestClient(app)\n"
+        "for p in ('/api/meta', '/api/overview'): assert c.get(p).status_code == 200, p\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-800:]

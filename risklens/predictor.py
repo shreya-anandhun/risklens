@@ -18,10 +18,11 @@ from .validation import NUMERIC_RANGES
 
 
 @lru_cache(maxsize=1)
-def load_model() -> tuple[xgb.XGBClassifier, dict]:
+def load_model() -> tuple[xgb.Booster, dict]:
     if not MODEL_PATH.exists() or not META_PATH.exists():
         raise FileNotFoundError("Model not found. Run: python -m risklens.pipeline")
-    model = xgb.XGBClassifier()
+    # A plain Booster, so serving does not need scikit-learn (XGBClassifier requires it).
+    model = xgb.Booster()
     model.load_model(MODEL_PATH)
     meta = json.loads(META_PATH.read_text())
     return model, meta
@@ -42,11 +43,16 @@ def cargo_value(rec: dict) -> float:
     return unit * float(units)
 
 
+def predict_proba(model: xgb.Booster, X: pd.DataFrame) -> np.ndarray:
+    """Probability of disruption within the horizon for each row of X."""
+    return model.predict(xgb.DMatrix(X[FEATURE_KEYS]))
+
+
 def _predict(records: list[dict]):
     model, _ = load_model()
     factors = [record_to_factors(r) for r in records]
     X = pd.DataFrame(factors)[FEATURE_KEYS]
-    proba = model.predict_proba(X)[:, 1]
+    proba = predict_proba(model, X)
     return factors, X, proba
 
 
@@ -162,7 +168,7 @@ def score_records(records: list[dict], alternatives: dict[str, list[dict]] | Non
         return []
     model, meta = load_model()
     factors, X, proba = _predict(records)
-    contribs = model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)  # SHAP values, last col = bias
+    contribs = model.predict(xgb.DMatrix(X[FEATURE_KEYS]), pred_contribs=True)  # SHAP values, last col = bias
     threshold = meta["metrics"]["decision_threshold"]
     alternatives = alternatives or {}
 
