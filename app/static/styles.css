@@ -161,7 +161,7 @@ label .hint { color: var(--faint); font-weight: 400; margin-left: 4px; }
 .drawer-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 24px 14px; border-bottom: 1px solid var(--border); }
 .drawer-head h2 { font-size: 18px; }
 .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
-.drawer-body { padding: 20px 24px 40px; overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+.drawer-body { padding: 20px 24px 40px; overflow: auto; display: flex; flex-direction: column; gap: 18px; overscroll-behavior: contain; }
 .score-hero { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
 .dial { width: 104px; height: 104px; border-radius: 50%; display: grid; place-items: center; position: relative; }
 .dial::after { content: ""; position: absolute; inset: 9px; background: var(--surface); border-radius: 50%; }
@@ -789,7 +789,7 @@ details.calc p { margin-top: 10px; color: var(--muted); }
 .modal-backdrop.open { opacity: 1; pointer-events: auto; }
 .modal { position: fixed; inset: 0; display: none; place-items: center; z-index: 80; padding: 20px; }
 .modal.open { display: grid; }
-.modal-card { width: min(640px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #fff; border-radius: 16px; box-shadow: 0 30px 60px rgba(16,24,40,.28); padding: 20px 22px; animation: modalin .25s cubic-bezier(.2,.7,.2,1); }
+.modal-card { width: min(640px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #fff; border-radius: 16px; box-shadow: 0 30px 60px rgba(16,24,40,.28); padding: 20px 22px; overscroll-behavior: contain; animation: modalin .25s cubic-bezier(.2,.7,.2,1); }
 .nm-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .nm-head h2 { font-size: 17px; margin-top: 2px; }
 .nm-demo { margin: 12px 0 4px; font-size: 12px; color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 10px; }
@@ -803,7 +803,7 @@ details.calc p { margin-top: 10px; color: var(--muted); }
 .rc-top em { font-style: normal; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; }
 .rc-sub { font-size: 11.5px; color: var(--muted); } .rc-sub .mono { font-size: 11px; }
 .rc-task { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
-.nm-field { margin-top: 8px; } .nm-field textarea { resize: vertical; font-family: var(--font); line-height: 1.45; }
+.nm-field { margin-top: 8px; } .nm-field textarea { resize: vertical; overscroll-behavior: contain; font-family: var(--font); line-height: 1.45; }
 .nm-foot { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 16px; } .nm-foot .muted { margin-right: auto; }
 @media (max-width: 700px) { .im-grid { grid-template-columns: 1fr; } .ae-btns { margin-left: 0; } }
 

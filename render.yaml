@@ -1,8 +1,0 @@
-# Render Blueprint: New > Blueprint > pick this repo, or use the Deploy to Render button in the README.
-services:
-  - type: web
-    name: risklens
-    runtime: docker
-    plan: free
-    healthCheckPath: /api/meta
-    autoDeploy: true
