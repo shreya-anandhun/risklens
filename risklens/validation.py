@@ -41,11 +41,15 @@ ALIASES = {
     "lead_time": "lead_time_days", "leadtime": "lead_time_days",
     "cost_per_unit": "average_cost_per_unit", "unit_cost": "average_cost_per_unit", "unit_value": "average_cost_per_unit",
     "quantity": "units", "qty": "units",
-    "date": "dispatch_date", "dispatch": "dispatch_date", "departure_date": "dispatch_date", "eta": "eta_date",
+    "date": "dispatch_date", "dispatch": "dispatch_date", "eta_date": "eta_date", "departure_date": "dispatch_date", "eta": "eta_date",
 }
 WEATHER = {"low", "medium", "high"}
 CONDITIONS = {c.lower(): c for c in WEATHER_CONDITIONS}
-IGNORED = {"disruption_occurred"}   # the outcome, when a file of past shipments is uploaded
+# The outcome, when a file of past shipments is uploaded, and the output columns of the portal's own export.
+IGNORED = {"disruption_occurred", "route", "journey_status", "journey", "journey_progress_pct", "days_to_eta", "trend_30d", "trend_direction",
+           "trend_min", "trend_max", "trend_avg", "risk_score", "risk_level", "top_driver", "cargo_value_usd", "expected_loss_usd",
+           "best_alternative", "alternative_risk_score", "alternative_risk_level", "alternative_net_benefit_usd",
+           "alternative_eta_change_days", "recommended_actions"}
 
 
 def _norm(col: str) -> str:

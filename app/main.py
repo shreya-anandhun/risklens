@@ -381,26 +381,55 @@ def template():
     return PlainTextResponse(out, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=risklens_shipments_template.csv"})
 
 
+def _journey_text(j: dict) -> str:
+    if not j:
+        return "Dates not set"
+    if j["status"] == "In transit":
+        return f"In transit · day {j['elapsed_days']} of {j['total_days']}"
+    return f"Departs {j['dispatch_date']}" if j["status"] == "Scheduled" else "Arrived"
+
+
+def _trend_direction(t: list[float]) -> str:
+    if len(t) < 6:
+        return "Not enough history"
+    early, late = sum(t[:10]) / len(t[:10]), sum(t[-10:]) / len(t[-10:])
+    return "Rising" if late - early > 5 else ("Falling" if early - late > 5 else "Steady")
+
+
 @app.get("/api/export.csv")
 def export_csv():
+    """The consignment board as a CSV. Input columns use the Kaggle names, so the file uploads straight back into What-if."""
     rows = []
     for r in book():
-        j = r["journey"] or {}
-        best = r.get("best_alternative")
+        j, i, t, best = r["journey"] or {}, r["inputs"], r.get("trend") or [], r.get("best_alternative")
+        acts = [x["action"] for x in r["recommendations"] if x["id"] != "maintain"]
         rows.append({
-            "consignment_id": r["consignment_id"], "cargo": r["cargo"], "shipper": r["supplier_name"],
-            "from": f"{r['origin_port']}, {r['origin_country']}", "to": f"{r['destination_port']}, {r['destination_country']}",
-            "mode": r["mode"], "dispatch_date": j.get("dispatch_date"), "eta_date": j.get("eta_date"),
-            "status": j.get("status"), "cargo_value_usd": r["cargo_value_usd"],
-            "risk_score": r["risk_score"], "risk_band": r["risk_band"], "expected_loss_usd": r["expected_loss_usd"],
-            **{f"factor_{f['key']}": f["value"] for f in r["factors"]},
-            "top_driver": r["top_driver"]["label"] if r["top_driver"] else "",
-            "recommended_alternative": best["title"] if best else "Stay on current plan",
-            "alternative_net_benefit_usd": best["net_benefit_usd"] if best else 0,
-            "mitigations": " | ".join(x["action"] for x in r["recommendations"]),
+            # inputs, in the Kaggle shipment layout
+            "Shipment_ID": r["consignment_id"], "Cargo": r["cargo"], "Product_Category": r["product_category"], "Supplier": r["supplier_name"],
+            "Origin_Port": r["origin_port"], "Origin_Country": r["origin_country"], "Destination_Port": r["destination_port"],
+            "Destination_Country": r["destination_country"], "Transport_Mode": r["mode"], "Weight_MT": i.get("weight_t"),
+            "Distance_km": i.get("distance_km"), "Fuel_Price_Index": i.get("fuel_price_index"),
+            "Geopolitical_Risk_Score": round(float(i.get("geopolitical_risk_index") or 0) / 10, 1), "Weather_Condition": i.get("weather_condition"),
+            "Carrier_Reliability_Score": i.get("reliability_score"), "Dispatch_Date": j.get("dispatch_date"), "ETA_Date": j.get("eta_date"),
+            # the board
+            "Route": f"{r['origin_port']} → {r['destination_port']}",
+            "Journey_Status": j.get("status"), "Journey": _journey_text(j),
+            "Journey_Progress_Pct": round(100 * j.get("progress", 0)), "Days_To_ETA": j.get("days_to_eta"),
+            "Trend_30d": " ".join(f"{v:.0f}" for v in t), "Trend_Direction": _trend_direction(t),
+            "Trend_Min": round(min(t)) if t else None, "Trend_Max": round(max(t)) if t else None,
+            "Trend_Avg": round(sum(t) / len(t)) if t else None,
+            "Risk_Score": r["risk_score"], "Risk_Level": r["risk_band"].title(),
+            "Top_Driver": r["top_driver"]["label"] if r["top_driver"] else "",
+            "Cargo_Value_USD": r["cargo_value_usd"], "Expected_Loss_USD": r["expected_loss_usd"],
+            "Best_Alternative": best["title"] if best else ("Stay on current plan" if r["risk_band"] == "low" else "No cheaper option than the mitigations"),
+            "Alternative_Risk_Score": best["risk_score"] if best else None,
+            "Alternative_Risk_Level": best["risk_band"].title() if best else None,
+            "Alternative_Net_Benefit_USD": best["net_benefit_usd"] if best else None,
+            "Alternative_ETA_Change_Days": best["eta_delta_days"] if best else None,
+            "Recommended_Actions": " | ".join(acts) if acts else "Stay on the current plan",
         })
     out = pd.DataFrame(rows).to_csv(index=False)
-    return Response(out, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=risklens_consignments.csv"})
+    return Response(out, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=risklens_consignments.csv"})
 
 
 # ---------------------------------------------------------------------------

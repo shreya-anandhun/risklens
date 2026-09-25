@@ -140,7 +140,19 @@ def test_template_roundtrips_import_and_export(client):
     assert added >= 1
     assert client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"] == 0
     e = client.get("/api/export.csv")
-    assert e.status_code == 200 and e.text.startswith("consignment_id,") and "recommended_alternative" in e.text.splitlines()[0]
+    head = e.text.splitlines()[0].split(",")
+    assert e.status_code == 200 and head[0] == "Shipment_ID"
+    assert {"Route", "Journey", "Trend_30d", "Risk_Level", "Best_Alternative", "Alternative_Risk_Score"} <= set(head)
+
+
+def test_export_uploads_back_into_what_if(client):
+    e = client.get("/api/export.csv")
+    df = pd.read_csv(__import__("io").BytesIO(e.content))
+    assert all(len(t.split()) == 30 for t in df.Trend_30d)
+    r = client.post("/api/score/csv", files={"file": ("export.csv", e.content, "text/csv")}).json()
+    assert r["rows_scored"] == len(df) and not r["errors"] and not r["warnings"]
+    back = {x["consignment_id"]: x["risk_score"] for x in r["results"]}
+    assert all(back[s] == pytest.approx(sc, abs=0.2) for s, sc in zip(df.Shipment_ID, df.Risk_Score))
 
 
 def test_overview_geo_for_globe(client):
