@@ -28,6 +28,7 @@ RiskLens adds them up. For every active consignment, it:
 2. **Explains** the score by showing how much each risk factor contributed to it.
 3. **Recommends** costed actions, such as rerouting, rescheduling or switching carrier, ranked by the money they save.
 4. **Notifies** the affected warehouses with a ready-to-send message.
+5. **Deploys** the action through an agent workflow: it answers the warehouse's questions, gets the stakeholder's sign-off and applies the fix.
 
 Everything in the portal is built from **four public Kaggle datasets**: shipments with a disruption label, the Geopolitical Risk (GPR) index, DataCo's order history and supplier master data. The operator, Northwind Logistics, is a fictional company. Its consignment book is ten real December 2025 shipments from the shipment dataset. Built for **Datathon 2K26** (BDA & CC track).
 
@@ -38,6 +39,7 @@ Everything in the portal is built from **four public Kaggle datasets**: shipment
 | **Overview** | Headline numbers for the consignment book, and an interactive 3D globe with every route coloured by risk. Sea routes follow real shipping lanes through Malacca, Suez, Hormuz and Panama. Hover a port or chokepoint for its situation and its real **GPR index** reading. Below the globe: the data sources, and recent real disruptions on the same lanes with whether the model warned about them. |
 | **Consignments** | A board with each shipment's route, journey progress, lane risk trend and best alternative. Click any row for its **cargo profile**: commodity and HS code, dangerous-goods class, load and container fill from the shipment's real weight, packing, handling rules and documents. |
 | **Recommended actions** | Mitigations ranked by net benefit, each with a rationale quoting the datasets. **Impact if fixed** shows risk and expected loss before and after. **Notify warehouses** drafts an editable message to the affected warehouses and logs it. |
+| **Intelligent workflow** | An agent-to-agent exchange that ends in a deployed action. The RiskLens agent sends the warehouse notification, the warehouse system asks a questionnaire, and the agent answers every question from the consignment's data. It then mails the stakeholder a consolidated summary, reads the reply (decision, date, constraint) and deploys the action itself: applying the model-scored alternative, or recording the action and moving the ETA. The stakeholder's reply is simulated; the deployment is real. |
 | **What-if analysis** | Score a planned shipment before it leaves, with the score updating as you type. Or drop in a CSV: the Kaggle shipment file uploads as-is, and when it includes the real outcomes, each prediction is checked against what happened. |
 
 <table>
@@ -221,6 +223,7 @@ risklens/
 │   ├── geo.py               Ports, sea-lane network and chokepoints for the globe
 │   ├── cargo.py             Cargo profiles per product category
 │   ├── notify.py            Warehouse notifications and impact estimates
+│   ├── workflow.py          Agent-to-agent exchange that deploys an action
 │   └── pipeline.py          Runs datasets → training → book
 ├── data/
 │   ├── kaggle/              Raw downloads (git-ignored)
@@ -248,6 +251,9 @@ risklens/
 | `POST` | `/api/consignments/reset` | Restore the book |
 | `GET` | `/api/actions/{id}/{action}/draft` | Recipients and message for a warehouse notification |
 | `GET` `POST` | `/api/notifications` | Notification log, or send a notification |
+| `GET` `POST` | `/api/workflows` | Workflow runs, or start one for a consignment and action |
+| `GET` | `/api/workflows/{id}` | One run with its full transcript |
+| `POST` | `/api/workflows/{id}/advance` | Reveal the next step; the last step deploys the action |
 | `POST` | `/api/score` | Score one consignment |
 | `POST` | `/api/score/csv` | Score a CSV file |
 | `GET` | `/api/template.csv` | Five real test shipments in the Kaggle layout |
@@ -266,6 +272,7 @@ The Kaggle shipment file's own columns work as-is: `Shipment_ID`, `Origin_Port`,
 - **Cargo value is estimated** from weight with a typical value per kilo for each category.
 - **Estimated action effects.** Rule-based risk reductions are planning estimates. Alternatives are re-scored by the model.
 - **Demo integrations.** Sensor readings and document statuses are sample values, since none of the datasets record them. Warehouse contacts use the reserved `example.com` domain, and notifications are logged, not emailed.
+- **Scripted agents.** The workflow's questions, answers and the stakeholder's reply are generated from the data rather than by a language model, so the exchange is deterministic and runs offline. The deployment it ends in is a real change to the consignment.
 
 ## Acknowledgements
 

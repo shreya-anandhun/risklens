@@ -19,7 +19,7 @@ RECORD_KEYS = [
     "origin_port", "origin_country", "region", "destination_port", "destination_country", "destination_region",
     "route_via", "dispatch_date", "eta_date", "lead_time_days", "weight_t", "units", "average_cost_per_unit",
     "distance_km", "fuel_price_index", "geopolitical_risk_index", "reliability_score",
-    "weather_condition", "weather_risk_index", "weather_risk_level", "applied_alternative",
+    "weather_condition", "weather_risk_index", "weather_risk_level", "applied_alternative", "executed_actions",
 ]
 
 

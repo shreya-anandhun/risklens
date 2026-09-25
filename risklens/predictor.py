@@ -203,7 +203,7 @@ def score_records(records: list[dict], alternatives: dict[str, list[dict]] | Non
             "origin_port": rec.get("origin_port"), "origin_country": rec.get("origin_country"), "region": rec.get("region"),
             "destination_port": rec.get("destination_port"), "destination_country": rec.get("destination_country"),
             "destination_region": rec.get("destination_region"), "route_via": rec.get("route_via"),
-            "journey": journey(rec), "applied_alternative": rec.get("applied_alternative"),
+            "journey": journey(rec), "applied_alternative": rec.get("applied_alternative"), "executed_actions": rec.get("executed_actions") or [],
             "risk_score": round(score, 1), "risk_band": risk_band(score),
             "flagged": bool(proba[i] >= threshold),
             "confidence": round(float(50 + 50 * min(1, margin)), 1),

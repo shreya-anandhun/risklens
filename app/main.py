@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from risklens import datasets, notify, store
+from risklens import datasets, notify, store, workflow
 from risklens.cargo import profile as cargo_profile
 from risklens.config import AS_OF, CATEGORIES, COMPANY, FEATURE_KEYS, FEATURES, MODES, RISK_BANDS, WEATHER_CONDITIONS
 from risklens.features import frame_to_features
@@ -109,13 +109,14 @@ def overview():
                        "flagged_in_advance": bool(s.pred >= elevated)})
     caught = test[test.disrupted == 1]
     actions = []
-    sent = notify.latest_by_action()
+    sent, deployed = notify.latest_by_action(), workflow.latest_by_action()
     for r in results:
         for rec in r["recommendations"]:
             if rec["id"] != "maintain":
+                k = f"{r['consignment_id']}|{rec['id']}"
                 actions.append({**rec, "consignment_id": r["consignment_id"], "lane": lane_label(r),
-                                "risk_score": r["risk_score"], "risk_band": r["risk_band"],
-                                "impact": notify.impact(rec, r), "notified": sent.get(f"{r['consignment_id']}|{rec['id']}"),
+                                "risk_score": r["risk_score"], "risk_band": r["risk_band"], "executed": rec["id"] in (r.get("executed_actions") or []),
+                                "impact": notify.impact(rec, r), "notified": sent.get(k), "deployed": deployed.get(k),
                                 "affected": [{"role": w["role"], "name": w["name"]} for w in notify.draft(rec, r, {**r, **r["inputs"]})["recipients"]]})
     actions.sort(key=lambda a: -a["net_benefit_usd"])
     return {
@@ -124,6 +125,7 @@ def overview():
         "catch_rate": round(float((caught.pred >= elevated).mean() * 100), 1) if len(caught) else None,
         "catch_window": [hist["test_from"], AS_OF.isoformat()], "catch_n": int(len(caught)),
         "lane_disruptions": int(len(dis)), "top_actions": actions[:6], "n_actions": len(actions),
+        "workflows_done": len(deployed),
         "geo": geo_payload(results), "gpr_global": datasets.gpr_global(), "sources": datasets.sources(),
     }
 
@@ -229,6 +231,56 @@ def notifications():
     return notify.list_notifications()
 
 
+# ---------------------------------------------------------------------------
+# intelligent workflow (agent-to-agent exchange that deploys an action)
+# ---------------------------------------------------------------------------
+@app.get("/api/workflows")
+def workflows():
+    return workflow.list_workflows()
+
+
+@app.get("/api/workflows/{wid}")
+def workflow_detail(wid: str):
+    w = workflow.get(wid)
+    if not w:
+        raise HTTPException(404, "Workflow not found")
+    return w
+
+
+@app.post("/api/workflows", status_code=201)
+def start_workflow(body: dict):
+    cid, action_id = body.get("consignment_id"), body.get("action_id")
+    if not cid or not action_id:
+        raise HTTPException(422, "consignment_id and action_id are required")
+    rec = store.get_consignment(cid)
+    if not rec:
+        raise HTTPException(404, "Consignment not found")
+    result = score_records([rec], store.load_alternatives())[0]
+    action = next((a for a in result["recommendations"] if a["id"] == action_id and a["id"] != "maintain"), None)
+    if not action:
+        raise HTTPException(404, "This action is not recommended for the consignment")
+    sent = notify.latest_by_action().get(f"{cid}|{action_id}")
+    return workflow.create(rec, result, action, sent)
+
+
+@app.post("/api/workflows/{wid}/advance")
+def advance_workflow(wid: str):
+    w = workflow.get(wid)
+    if not w:
+        raise HTTPException(404, "Workflow not found")
+    if w["status"] == "done":
+        return w
+    rec = store.get_consignment(w["consignment_id"])
+    if not rec:
+        raise HTTPException(404, "Consignment not found")
+    result = score_records([rec], store.load_alternatives())[0]
+    action = next((a for a in result["recommendations"] if a["id"] == w["action_id"]), None)
+    if not action:
+        raise HTTPException(409, "The action is no longer recommended for this consignment")
+    w = workflow.advance(wid, rec, result, action, store.upsert_consignment)
+    return w
+
+
 @app.post("/api/consignments/{cid}/apply/{alt_id}")
 def apply_alternative(cid: str, alt_id: str):
     rec = store.get_consignment(cid)
@@ -257,6 +309,7 @@ def remove_consignment(cid: str):
 def reset_consignments():
     store.reset()
     notify.clear()
+    workflow.clear()
     return {"count": len(store.list_consignments())}
 
 

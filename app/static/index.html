@@ -21,6 +21,7 @@
       <a href="#overview" data-view="overview" class="nav-item active"><span class="nav-ico">▦</span>Overview</a>
       <a href="#consignments" data-view="consignments" class="nav-item"><span class="nav-ico">☷</span>Consignments<span class="nav-count" id="nav-count"></span></a>
       <a href="#actions" data-view="actions" class="nav-item"><span class="nav-ico">✓</span>Recommended actions<span class="nav-count" id="nav-actions"></span></a>
+      <a href="#workflow" data-view="workflow" class="nav-item"><span class="nav-ico">⟳</span>Intelligent workflow<span class="nav-count" id="nav-workflow"></span></a>
       <a href="#whatif" data-view="whatif" class="nav-item"><span class="nav-ico">⌕</span>What-if analysis</a>
     </nav>
     <div class="sidebar-foot">
@@ -115,9 +116,38 @@
         <div class="card-head"><div><h2>Recommended actions</h2><p class="muted">Mitigations ranked by net benefit: loss avoided minus cost.</p></div></div>
         <div id="top-actions" class="action-list"></div>
       </div>
+      <div class="card" id="deployed-card" hidden>
+        <div class="card-head"><div><h2>Deployed through the intelligent workflow</h2><p class="muted">Actions the RiskLens agent agreed with the warehouse and carried out.</p></div></div>
+        <div id="deployed-log"></div>
+      </div>
       <div class="card">
         <div class="card-head"><div><h2>Warehouse notifications</h2><p class="muted">Messages sent to affected warehouses from this page.</p></div><span class="demo-pill">Demo mode · logged, not emailed</span></div>
         <div id="notif-log"></div>
+      </div>
+    </section>
+
+    <!-- INTELLIGENT WORKFLOW -->
+    <section class="view" id="view-workflow">
+      <div class="card wf-pick">
+        <div class="wf-pick-row">
+          <div class="wf-pick-txt"><h2>Run a workflow</h2><p class="muted">Pick a recommended action. The RiskLens agent notifies the warehouse, answers its questions from the data, gets the stakeholder's sign-off and deploys the action.</p></div>
+          <div class="wf-pick-ctl"><select class="input" id="wf-action" aria-label="Action to run"></select><button class="btn btn-primary" id="wf-run">Run workflow</button></div>
+        </div>
+        <div class="wf-runs" id="wf-runs"></div>
+      </div>
+      <div class="wf-grid">
+        <div class="card wf-chat">
+          <div class="wf-chat-head">
+            <div class="wf-parties" id="wf-parties"></div>
+            <span class="demo-pill" id="wf-status">Simulated exchange on live data</span>
+          </div>
+          <div class="wf-thread" id="wf-thread"><div class="empty">Choose an action above and run the workflow.</div></div>
+        </div>
+        <aside class="card wf-rail" aria-label="Agent workflow">
+          <div class="wf-rail-head"><span class="wf-rail-kicker">Agent workflow</span><span class="tag" id="wf-rail-tag">not started</span></div>
+          <ol class="wf-steps" id="wf-steps"></ol>
+          <div id="wf-outcome"></div>
+        </aside>
       </div>
     </section>
 

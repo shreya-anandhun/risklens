@@ -41,6 +41,7 @@
     overview: ["Overview", () => { const s = state.overview?.summary; return s ? `${s.n} active consignments · ${s.in_transit} in transit, ${s.scheduled} scheduled · as of ${fmtDateY(s.as_of)}` : ""; }],
     consignments: ["Consignments", () => "Your consignment book. Click a consignment for its cargo profile: what it is, the load, and how it must be handled."],
     actions: ["Recommended actions", () => "Mitigations across your consignments, ranked by net benefit."],
+    workflow: ["Intelligent workflow", () => "Two agents agree the plan, the stakeholder signs off, and RiskLens deploys the action."],
     whatif: ["What-if analysis", () => "Test a planned consignment or a batch before you book it."],
   };
   function show(view) {
@@ -53,6 +54,7 @@
     if (view === "overview") { renderOverview(); globeResume(); } else globePause();
     if (view === "consignments") renderBoard();
     if (view === "actions") renderActions();
+    if (view === "workflow") renderWorkflowPage();
   }
   window.addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
   const currentView = () => (PAGES[location.hash.slice(1)] ? location.hash.slice(1) : "overview");
@@ -67,13 +69,14 @@
     $("#sidebar-meta").innerHTML = `${meta.sources.length} Kaggle datasets · as of ${esc(fmtDateY(meta.as_of))}<br>Model AUC ${meta.model.auc_roc.toFixed(2)} on ${meta.model.n_test.toLocaleString()} test shipments`;
     updateCounts();
   }
-  function updateCounts() { $("#nav-count").textContent = state.rows.length; $("#nav-actions").textContent = state.overview.top_actions.length; }
+  function updateCounts() { $("#nav-count").textContent = state.rows.length; $("#nav-actions").textContent = state.overview.top_actions.length; $("#nav-workflow").textContent = state.overview.workflows_done || ""; }
   async function refresh() {
     state.overview = await api("/api/overview"); state.rows = state.overview.consignments; updateCounts();
     const v = currentView();
     if (v === "overview") renderOverview(); else state.globeDirty = true;
     if (v === "consignments") renderBoard();
     if (v === "actions") renderActions();
+    if (v === "workflow") renderWorkflowPage({ keep: true });
     $("#page-sub").textContent = PAGES[v][1]();
   }
 
@@ -148,19 +151,34 @@
   }
   function renderActions() {
     const o = state.overview;
-    $("#top-actions").innerHTML = o.top_actions.length ? o.top_actions.map((a) => {
-      const k = actKey(a), n = a.notified, open = openImpact.has(k);
+    const done = (a) => !!(a.deployed || a.executed);
+    const ordered = [...o.top_actions].sort((x, y) => done(x) - done(y));
+    $("#top-actions").innerHTML = ordered.length ? ordered.map((a) => {
+      const k = actKey(a), n = a.notified, open = openImpact.has(k), dep = a.deployed;
+      if (done(a)) return `<div class="act-item deployed" data-key="${esc(k)}">
+      <div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div></div><div class="a-meta"><span class="dep-stamp">Deployed</span>${dep ? esc(fmtWhen(dep.deployed_at)) : "by workflow"}</div></div>
+      <div class="act-extra"><span class="sent-badge"><span class="sb-ic">✓</span>${dep ? esc(dep.result.summary) : "Executed through the intelligent workflow."}</span>${dep ? `<span class="ae-btns"><a class="btn btn-sm btn-ghost" href="#workflow" data-workflow-open="${esc(dep.id)}">View the run →</a></span>` : ""}</div></div>`;
       return `<div class="act-item ${n ? "sent" : ""}" data-key="${esc(k)}">
       <div class="action"><div><div class="a-title">${esc(a.action)}</div><div class="a-sub"><a href="#" data-open="${esc(a.consignment_id)}">${esc(a.consignment_id)}</a> · ${esc(a.lane)} · ${chip(a.risk_band)}</div><div class="a-sub">${esc(a.trigger)}</div></div><div class="a-meta">Net benefit<b class="${a.net_benefit_usd >= 0 ? "good" : "bad"}">${fmtUSD(a.net_benefit_usd)}</b>${esc(a.timeline)}</div></div>
       <div class="act-extra">
         ${n ? `<span class="sent-badge"><span class="sb-ic">✓</span>Notification sent to ${esc(names(n.recipients.map((r) => r.name)))} · ${esc(fmtWhen(n.sent_at))}</span>` : `<span class="muted small">Affects ${esc(names(a.affected.map((w) => w.name)))}</span>`}
         <span class="ae-btns"><button class="btn btn-sm btn-ghost ${open ? "on" : ""}" data-impact="${esc(k)}" aria-expanded="${open}">Impact if fixed <span class="chev">▾</span></button>
-        <button class="btn btn-sm ${n ? "btn-secondary" : "btn-primary"}" data-notify="${esc(k)}">${n ? "Notify again" : "Notify warehouses"}</button></span>
+        <button class="btn btn-sm ${n ? "btn-secondary" : "btn-primary"}" data-notify="${esc(k)}">${n ? "Notify again" : "Notify warehouses"}</button>${n ? `<button class="btn btn-sm btn-primary wf-go" data-workflow="${esc(k)}">Run intelligent workflow →</button>` : ""}</span>
       </div>
       ${open ? impactHTML(a) : ""}
     </div>`;
     }).join("") : `<div class="empty">No actions needed. Every consignment is within tolerance.</div>`;
-    renderNotifLog();
+    renderNotifLog(); renderDeployedLog();
+  }
+  async function renderDeployedLog() {
+    const card = $("#deployed-card"); let runs = [];
+    try { runs = (await api("/api/workflows")).filter((w) => w.status === "done"); } catch (e) { runs = []; }
+    card.hidden = !runs.length; if (!runs.length) return;
+    $("#deployed-log").innerHTML = `<div class="dep-list">${runs.map((w) => { const d = w.steps.deploy; return `<div class="dep-item">
+      <div class="im-flow dep-flow"><span class="im-score" style="--c:${BAND_COLOR[d.band_before]}">${d.risk_before.toFixed(0)}<small>${d.band_before}</small></span><span class="im-arrow"><i></i></span><span class="im-score after" style="--c:${BAND_COLOR[d.band_after]}">${d.risk_after.toFixed(0)}<small>${d.band_after}</small></span></div>
+      <div class="dep-main"><div class="a-title">${esc(w.action)}</div><div class="a-sub"><a href="#" data-open="${esc(w.consignment_id)}">${esc(w.consignment_id)}</a> · ${esc(w.lane)} · ${d.kind === "alternative" ? "applied “" + esc(d.title) + "” and re-scored by the model" : "recorded as executed"}${d.eta_after !== d.eta_before ? ` · ETA ${esc(fmtDate(d.eta_before))} → ${esc(fmtDate(d.eta_after))}` : ""}</div>
+        <div class="a-sub">Signed off by ${esc(w.stakeholder.name)}, ${esc(w.stakeholder.org)} · ${esc(fmtWhen(w.deployed_at))}</div></div>
+      <div class="dep-side"><span class="dep-stamp">Deployed</span><a class="btn btn-sm btn-ghost" href="#workflow" data-workflow-open="${esc(w.id)}">View the run →</a></div></div>`; }).join("")}</div>`;
   }
   async function renderNotifLog() {
     const el = $("#notif-log"); if (!el) return;
@@ -174,6 +192,10 @@
   $("#top-actions").addEventListener("click", (e) => {
     const ib = e.target.closest("[data-impact]"); if (ib) { const k = ib.dataset.impact; openImpact.has(k) ? openImpact.delete(k) : openImpact.add(k); renderActions(); return; }
     const nb = e.target.closest("[data-notify]"); if (nb) openNotify(nb.dataset.notify);
+  });
+  document.addEventListener("click", (e) => {
+    const wb = e.target.closest("[data-workflow]"); if (wb) { WF.pending = wb.dataset.workflow; location.hash = "workflow"; }
+    const wo = e.target.closest("[data-workflow-open]"); if (wo) { WF.open = wo.dataset.workflowOpen; }
   });
 
   // ---------- notify modal ----------
@@ -847,7 +869,122 @@
   }
   document.addEventListener("click", (e) => { const t = e.target.closest("[data-cargo]"); if (t) { e.preventDefault(); openCargo(t.dataset.cargo); } });
 
-  // ---------- what-if ----------
+
+  // ---------- intelligent workflow ----------
+  const WF = { current: null, runs: [], playing: false, pending: null, open: null };
+  const STEP_LABEL = {
+    notify: "Notification sent to the warehouse", questions: "Warehouse system asks its questions", answers: "RiskLens answers from the data",
+    mail: "Consolidated mail to the stakeholder", reply: "Stakeholder reply received", understand: "Reply understood: decision, date, constraint", deploy: "Action deployed on the consignment",
+  };
+  const STEP_WAIT = { questions: 1500, answers: 1700, mail: 1600, reply: 2400, understand: 2000, deploy: 1600 };
+  const TYPING = { questions: ["warehouse", "Warehouse system is asking…"], answers: ["risklens", "RiskLens agent is answering from the data…"], mail: ["risklens", "RiskLens agent is composing the mail…"],
+    reply: ["stakeholder", "Waiting for the stakeholder…"], understand: ["risklens", "RiskLens agent is reading the reply…"], deploy: ["risklens", "RiskLens agent is deploying the action…"] };
+  const initials = (n) => n.split(/\s+/).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
+  const avatar = (who, w) => who === "stakeholder" ? `<span class="wf-av human">${esc(initials(w.stakeholder.name))}</span>` : `<span class="wf-av ${who}">${esc(w.agents[who].short)}</span>`;
+  const who = (k, w) => (k === "stakeholder" ? w.stakeholder.name : w.agents[k].name);
+  const revealed = (w) => ["notify", "questions", "answers", "mail", "reply", "understand", "deploy"].slice(0, w.revealed);
+  const pre = (t) => `<pre class="wf-pre">${esc(t)}</pre>`;
+
+  function wfPicker() {
+    const acts = (state.overview?.top_actions || []).filter((a) => !a.deployed && !a.executed);
+    const sel = $("#wf-action");
+    sel.innerHTML = acts.length ? acts.map((a) => `<option value="${esc(actKey(a))}">${esc(a.action)} · ${esc(a.consignment_id)} · ${esc(a.lane)}${a.notified ? " · notified" : ""}</option>`).join("") : `<option value="">No open actions</option>`;
+    const notified = acts.filter((a) => a.notified).sort((x, y) => y.notified.sent_at.localeCompare(x.notified.sent_at));
+    if (WF.pending && acts.some((a) => actKey(a) === WF.pending)) sel.value = WF.pending; else if (notified.length) sel.value = actKey(notified[0]);
+    $("#wf-run").disabled = !acts.length || WF.playing;
+  }
+  function wfRuns() {
+    const el = $("#wf-runs");
+    el.innerHTML = WF.runs.length ? `<span class="wf-runs-l">Runs</span>` + WF.runs.map((r) => `<button class="wf-run-chip ${WF.current?.id === r.id ? "on" : ""} ${r.status}" data-wf="${esc(r.id)}"><span class="d"></span>${esc(r.action)}<small>${esc(r.consignment_id)} · ${r.status === "done" ? "deployed " + esc(fmtWhen(r.deployed_at)) : "in progress"}</small></button>`).join("") : "";
+  }
+  async function renderWorkflowPage(opts = {}) {
+    try { WF.runs = await api("/api/workflows"); } catch (e) { WF.runs = []; }
+    wfPicker(); wfRuns();
+    if (WF.open) { const r = WF.runs.find((x) => x.id === WF.open); WF.open = null; if (r) { WF.current = r; renderWorkflow(r); return; } }
+    if (WF.pending && !WF.playing) { const k = WF.pending; WF.pending = null; if ($("#wf-action").value === k) { startWorkflow(k); return; } }
+    if (opts.keep && WF.current) { const r = WF.runs.find((x) => x.id === WF.current.id); if (r && !WF.playing) { WF.current = r; renderWorkflow(r); } return; }
+    if (!WF.current && WF.runs.length) { WF.current = WF.runs[0]; renderWorkflow(WF.runs[0]); }
+    else if (WF.current) renderWorkflow(WF.current);
+  }
+  async function startWorkflow(k) {
+    const [cid, aid] = k.split("|");
+    $("#wf-run").disabled = true;
+    try {
+      const w = await api("/api/workflows", { body: { consignment_id: cid, action_id: aid } });
+      WF.current = w; WF.runs.unshift(w); wfRuns(); renderWorkflow(w, { animate: true });
+      playWorkflow(w.id);
+    } catch (e) { toast(e.message); $("#wf-run").disabled = false; }
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function playWorkflow(id) {
+    WF.playing = true; $("#wf-run").disabled = true;
+    try {
+      let w = WF.current;
+      while (w && w.id === id && w.status !== "done" && currentView() === "workflow") {
+        const next = ["notify", "questions", "answers", "mail", "reply", "understand", "deploy"][w.revealed];
+        showTyping(next, w); await sleep(STEP_WAIT[next] || 1200);
+        w = await api(`/api/workflows/${encodeURIComponent(id)}/advance`, { method: "POST" });
+        if (WF.current?.id !== id) break;
+        WF.current = w; const i = WF.runs.findIndex((x) => x.id === id); if (i >= 0) WF.runs[i] = w;
+        renderWorkflow(w, { animate: true, just: next });
+        if (w.status === "done") { await refresh(); wfRuns(); toast(`${w.consignment_id}: action deployed by the RiskLens agent`); }
+      }
+    } catch (e) { toast(e.message); }
+    WF.playing = false; wfPicker();
+  }
+  function showTyping(step, w) {
+    const [k, label] = TYPING[step] || ["risklens", "Working…"];
+    const t = $("#wf-thread"); t.querySelector(".wf-typing")?.remove();
+    t.insertAdjacentHTML("beforeend", `<div class="wf-msg ${k === "risklens" ? "left" : "right"} wf-typing">${avatar(k, w)}<div class="wf-bubble"><span class="wf-dots"><i></i><i></i><i></i></span>${esc(label)}</div></div>`);
+    t.scrollTo({ top: t.scrollHeight, behavior: "smooth" });
+    railRender(w, step);
+  }
+  function msg(k, w, inner, cls = "") {
+    const side = k === "risklens" ? "left" : "right";
+    return `<div class="wf-msg ${side} ${cls}">${avatar(k, w)}<div class="wf-bubble-wrap"><span class="wf-who">${esc(who(k, w))}${k === "stakeholder" ? '<em class="wf-sim">simulated reply</em>' : ""}</span>${inner}</div></div>`;
+  }
+  function stepHTML(step, w) {
+    const S = w.steps;
+    if (step === "notify") return msg("risklens", w, `<div class="wf-bubble"><b>Notification sent to ${esc(names(S.notify.to))}</b>${S.notify.sent_at ? `<span class="wf-meta">from Recommended actions · ${esc(fmtWhen(S.notify.sent_at))}</span>` : ""}
+      <details class="wf-det"><summary>${esc(S.notify.subject)}</summary>${pre(S.notify.body)}</details></div>`);
+    if (step === "questions") return `<div class="wf-group">${S.questions.map((q, i) => msg("warehouse", w, `<div class="wf-bubble q" style="--i:${i}"><span class="wf-qn">Q${i + 1}</span>${esc(q)}</div>`, i ? "cont" : "")).join("")}</div>`;
+    if (step === "answers") return `<div class="wf-group">${S.answers.map((x, i) => msg("risklens", w, `<div class="wf-bubble a" style="--i:${i}"><span class="wf-qref">Q${i + 1} · ${esc(x.q)}</span>${esc(x.a)}<span class="wf-src">${esc(x.source)}</span></div>`, i ? "cont" : "")).join("")}</div>`;
+    if (step === "mail") { const m = S.mail; return msg("risklens", w, `<div class="wf-mail sent"><div class="wf-mail-top"><span class="wf-env">✉</span><div><div class="wf-mail-k">Consolidated mail · to ${esc(m.to.name)}, ${esc(m.to.org)}</div><div class="wf-mail-addr mono">${esc(m.to.email)}${m.cc.length ? " · cc " + esc(m.cc.join(", ")) : ""}</div></div><span class="wf-stamp">Sent</span></div>
+      <div class="wf-mail-subj">${esc(m.subject)}</div>${pre(m.body)}</div>`); }
+    if (step === "reply") { const r = S.reply; return msg("stakeholder", w, `<div class="wf-mail reply"><div class="wf-mail-top"><span class="wf-env">↩</span><div><div class="wf-mail-k">From ${esc(r.from.name)}, ${esc(r.from.org)}</div><div class="wf-mail-addr mono">${esc(r.from.email)}</div></div></div>
+      <div class="wf-mail-subj">${esc(r.subject)}</div>${pre(r.body)}</div>`); }
+    if (step === "understand") { const u = S.understand, r = S.reply; return msg("risklens", w, `<div class="wf-read"><div class="wf-read-k">Reading the reply</div>
+      <p class="wf-read-txt">${r.segments.map((g, i) => g.kind ? `<mark class="${g.kind}" style="--i:${i}"><em>${g.kind}</em>${esc(g.text)}</mark>` : esc(g.text)).join("")}</p>
+      <ul class="wf-checks">${u.checks.map((c, i) => `<li style="--i:${i}"><span class="ck">✓</span><b>${esc(c.label)}</b><span>${esc(c.detail)}</span></li>`).join("")}</ul>
+      <div class="wf-plan"><span>Decision</span><b>${esc(u.plan)}</b></div></div>`); }
+    if (step === "deploy" && S.deploy) { const d = S.deploy; return msg("risklens", w, `<div class="wf-deploy"><div class="wf-deploy-top"><span class="wf-deploy-k">Action deployed</span><span class="wf-stamp big">Deployed</span></div>
+      <div class="wf-deploy-grid"><div class="im-flow"><span class="im-score" style="--c:${BAND_COLOR[d.band_before]}">${d.risk_before.toFixed(0)}<small>${d.band_before}</small></span><span class="im-arrow"><i></i></span><span class="im-score after" style="--c:${BAND_COLOR[d.band_after]}">${d.risk_after.toFixed(0)}<small>${d.band_after}</small></span></div>
+        <dl class="wf-dl"><dt>${d.kind === "alternative" ? "Applied" : "Recorded"}</dt><dd>${esc(d.title)}</dd>${d.changes.length ? `<dt>Changes</dt><dd>${esc(d.changes.join(" · "))}</dd>` : ""}<dt>ETA</dt><dd>${esc(fmtDate(d.eta_before))}${d.eta_after !== d.eta_before ? ` → ${esc(fmtDate(d.eta_after))}` : " (unchanged)"}</dd><dt>Expected loss</dt><dd>${fmtUSD(d.loss_before)} → <b class="good">${fmtUSD(d.loss_after)}</b></dd></dl></div>
+      <p class="wf-deploy-sum">${esc(d.summary)} ${d.rescored ? "" : "The estimate uses the action's expected risk reduction."}</p>
+      <div class="wf-deploy-links"><a href="#" class="btn btn-sm btn-secondary" data-open="${esc(w.consignment_id)}">Open ${esc(w.consignment_id)}</a><a href="#actions" class="btn btn-sm btn-ghost">Back to actions</a></div></div>`); }
+    return "";
+  }
+  function renderWorkflow(w, opts = {}) {
+    $("#wf-parties").innerHTML = ["risklens", "warehouse", "stakeholder"].map((k) => `<span class="wf-party">${avatar(k, w)}<span><b>${esc(who(k, w))}</b><small>${k === "stakeholder" ? esc(w.stakeholder.org) : k === "risklens" ? "answers from the data" : "asks what it needs"}</small></span></span>`).join("");
+    $("#wf-status").textContent = `${w.consignment_id} · ${w.action} · risk ${w.risk_before.toFixed(0)}`;
+    const t = $("#wf-thread"), steps = revealed(w);
+    if (opts.just) { t.querySelector(".wf-typing")?.remove(); t.insertAdjacentHTML("beforeend", `<div class="wf-step new">${stepHTML(opts.just, w)}</div>`); }
+    else t.innerHTML = steps.map((s) => `<div class="wf-step ${opts.animate ? "new" : ""}">${stepHTML(s, w)}</div>`).join("");
+    t.scrollTo({ top: t.scrollHeight, behavior: opts.just ? "smooth" : "auto" });
+    railRender(w, null); wfRuns();
+  }
+  function railRender(w, active) {
+    const done = new Set(revealed(w));
+    $("#wf-rail-tag").textContent = w.status === "done" ? "complete" : active ? "running" : `${done.size} of 7 steps`;
+    $("#wf-steps").innerHTML = w.phases.map(([key, title, subs]) => `<li class="wf-phase ${subs.every((s) => done.has(s)) ? "done" : subs.some((s) => done.has(s) || s === active) ? "on" : ""}">
+      <div class="wf-phase-h"><span class="wf-phase-n">${subs.every((s) => done.has(s)) ? "✓" : ""}</span><b>${esc(title)}</b></div>
+      <ol>${subs.map((s) => `<li class="${done.has(s) ? "done" : s === active ? "active" : ""}"><span class="wf-node"></span>${esc(STEP_LABEL[s])}</li>`).join("")}</ol></li>`).join("");
+    const d = w.steps.deploy;
+    $("#wf-outcome").innerHTML = d ? `<div class="wf-out"><span class="wf-out-k">Outcome</span><b>${d.risk_before.toFixed(0)} → ${d.risk_after.toFixed(0)}</b><span>${esc(d.title)}</span><small>${esc(fmtWhen(w.deployed_at))}</small></div>` : "";
+  }
+  $("#wf-run").addEventListener("click", () => { const k = $("#wf-action").value; if (k) startWorkflow(k); });
+  $("#wf-runs").addEventListener("click", (e) => { const b = e.target.closest("[data-wf]"); if (!b || WF.playing) return; const r = WF.runs.find((x) => x.id === b.dataset.wf); if (r) { WF.current = r; renderWorkflow(r); } });
+
   // ---------- what-if (one page: CSV on top, a compact single check below) ----------
   const WI_FIELDS = [
     ["product_category", "Category", "select", opt(CATEGORIES)],
