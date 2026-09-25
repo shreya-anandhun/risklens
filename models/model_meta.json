@@ -1,8 +1,8 @@
 {
   "model": "XGBoost gradient-boosted trees (binary:logistic)",
-  "trained_at": "2026-09-24T10:40:50+00:00",
-  "horizon_days": 7,
-  "target": "disruption within next 7 days",
+  "trained_at": "2026-09-25T07:43:02+00:00",
+  "target": "disruption on the shipment (Disruption_Occurred)",
+  "dataset": "Global Supply Chain Risk & Logistics 2024-2026 (Kaggle)",
   "params": {
     "n_estimators": 300,
     "max_depth": 4,
@@ -11,133 +11,116 @@
     "colsample_bytree": 0.85,
     "min_child_weight": 3,
     "reg_lambda": 2.0,
-    "monotone_constraints": "(1,1,1,1,1,1,1)",
+    "monotone_constraints": "(1,1,1,1,1)",
     "random_state": 42
   },
-  "n_train": 4128,
-  "n_test": 1056,
+  "n_train": 3692,
+  "n_test": 1308,
+  "n_validation": 601,
   "train_window": [
-    "2026-06-01",
-    "2026-08-25"
+    "2024-01-01",
+    "2025-06-30"
   ],
   "test_window": [
-    "2026-08-26",
-    "2026-09-16"
+    "2025-07-01",
+    "2025-12-31"
   ],
-  "n_suppliers": 48,
-  "n_disruption_events": 240,
+  "excluded": {
+    "Lead_Time_Days": "records transit time after a disruption, so it leaks the outcome"
+  },
   "features": [
     {
-      "key": "reliability_risk",
-      "label": "Supplier reliability",
-      "source": "on_time_deliveries / total_deliveries",
-      "formula": "1 - reliability_score",
-      "explain": "Share of late or failed deliveries. A supplier that delivers on time 90% of the time scores 0.10.",
-      "weight": 0.2
-    },
-    {
-      "key": "lead_time_risk",
-      "label": "Lead time exposure",
-      "source": "lead_time_days",
-      "formula": "(lead_time_days - 10) / (90 - 10), clipped to 0-1",
-      "explain": "Longer lead times mean a longer recovery window once something goes wrong.",
-      "weight": 0.1
-    },
-    {
-      "key": "lead_time_variability",
-      "label": "Lead time variability",
-      "source": "lead_time_std_days / lead_time_days",
-      "formula": "min(1, coefficient_of_variation / 0.50)",
-      "explain": "How inconsistent deliveries are. A supplier whose lead time swings by half its average scores 1.0.",
-      "weight": 0.1
+      "key": "weather_risk",
+      "label": "Weather conditions",
+      "source": "Weather_Condition",
+      "formula": "severity / 100: Clear 10, Rain 35, Fog 45, Storm 75, Hurricane 95",
+      "explain": "Weather on the route. Every hurricane shipment in the data was disrupted, and three in four storm shipments.",
+      "weight": 0.35
     },
     {
       "key": "geopolitical_risk",
       "label": "Geopolitical risk",
-      "source": "geopolitical_risk_index, port_congestion_index",
-      "formula": "0.7 \u00d7 geopolitical_index/100 + 0.3 \u00d7 port_congestion_index/100",
-      "explain": "Country and trade-route instability, blended with logistics congestion in the region.",
-      "weight": 0.18
+      "source": "Geopolitical_Risk_Score (0-10)",
+      "formula": "score / 10",
+      "explain": "Instability along the route and at the ports. Disruption rises steadily with this score in every weather condition.",
+      "weight": 0.3
     },
     {
-      "key": "weather_risk",
-      "label": "Weather & climate risk",
-      "source": "weather_risk_index or weather_risk_level",
-      "formula": "weather_risk_index / 100 (or low=0.15, medium=0.50, high=0.90)",
-      "explain": "Severe weather likelihood at the supplier's site and shipping lanes.",
-      "weight": 0.14
+      "key": "reliability_risk",
+      "label": "Carrier reliability",
+      "source": "Carrier_Reliability_Score (0-1)",
+      "formula": "1 - reliability score",
+      "explain": "How often this carrier delivers as planned. A carrier with a 0.90 score rates 0.10.",
+      "weight": 0.15
     },
     {
-      "key": "price_volatility",
-      "label": "Commodity price volatility",
-      "source": "commodity_price_index (30-day window)",
-      "formula": "min(1, 30-day % swing / 25)",
-      "explain": "Input-cost instability. Sharp price moves precede supplier renegotiation, allocation and default.",
-      "weight": 0.12
+      "key": "fuel_price_risk",
+      "label": "Fuel price",
+      "source": "Fuel_Price_Index (1.2-4.5)",
+      "formula": "(index - 1.2) / (4.5 - 1.2)",
+      "explain": "Fuel cost pressure at the time of shipping, which drives surcharges and rolled bookings.",
+      "weight": 0.1
     },
     {
-      "key": "disruption_recency",
-      "label": "Disruption recency",
-      "source": "days_since_last_disruption",
-      "formula": "exp(-days_since_last_disruption / 30)",
-      "explain": "How fresh the last failure is. Yesterday's disruption scores ~0.97; one 90 days ago scores ~0.05.",
-      "weight": 0.16
+      "key": "distance_risk",
+      "label": "Route distance",
+      "source": "Distance_km",
+      "formula": "distance / 15,000 km",
+      "explain": "Longer routes spend more time exposed to weather and chokepoints.",
+      "weight": 0.1
     }
   ],
   "feature_keys": [
-    "reliability_risk",
-    "lead_time_risk",
-    "lead_time_variability",
-    "geopolitical_risk",
     "weather_risk",
-    "price_volatility",
-    "disruption_recency"
+    "geopolitical_risk",
+    "reliability_risk",
+    "fuel_price_risk",
+    "distance_risk"
   ],
   "importance": {
-    "disruption_recency": 0.3399,
-    "price_volatility": 0.1353,
-    "lead_time_risk": 0.1345,
-    "weather_risk": 0.1054,
-    "geopolitical_risk": 0.1036,
-    "reliability_risk": 0.0971,
-    "lead_time_variability": 0.0841
+    "weather_risk": 0.7775,
+    "geopolitical_risk": 0.1428,
+    "reliability_risk": 0.0367,
+    "fuel_price_risk": 0.0219,
+    "distance_risk": 0.021
   },
   "metrics": {
-    "auc_roc": 0.8038,
-    "avg_precision": 0.6103,
-    "accuracy": 0.8078,
-    "precision": 0.5052,
-    "recall": 0.7087,
-    "f1": 0.5899,
-    "brier": 0.1147,
-    "decision_threshold": 0.29,
-    "base_rate_test": 0.1951,
-    "cv_auc_mean": 0.7803,
-    "cv_auc_std": 0.0185
+    "auc_roc": 0.8354,
+    "avg_precision": 0.9013,
+    "accuracy": 0.7424,
+    "precision": 0.7505,
+    "recall": 0.8645,
+    "f1": 0.8035,
+    "brier": 0.1622,
+    "brier_baseline": 0.238,
+    "decision_threshold": 0.43,
+    "base_rate_test": 0.6093,
+    "caught_elevated_or_high": 0.8946,
+    "cv_auc_mean": 0.8247,
+    "cv_auc_std": 0.0158
   },
   "risk_bands": [
     {
       "band": "low",
       "min": 0,
-      "max": 12
+      "max": 40
     },
     {
       "band": "elevated",
-      "min": 12,
-      "max": 30
+      "min": 40,
+      "max": 70
     },
     {
       "band": "high",
-      "min": 30,
+      "min": 70,
       "max": 101
     }
   ],
   "score_percentiles": {
-    "10": 5.1,
-    "25": 9.0,
-    "50": 16.7,
-    "75": 29.5,
-    "90": 54.8,
-    "95": 75.8
+    "10": 23.8,
+    "25": 38.8,
+    "50": 58.9,
+    "75": 93.2,
+    "90": 99.6
   }
 }

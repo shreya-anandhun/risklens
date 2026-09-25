@@ -6,3 +6,4 @@ Dockerfile
 run.sh
 requirements-dev.txt
 data/portal
+data/kaggle

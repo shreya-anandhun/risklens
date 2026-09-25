@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY risklens ./risklens
 COPY app ./app
-COPY data/raw ./data/raw
+
 COPY data/processed ./data/processed
 COPY models ./models
 

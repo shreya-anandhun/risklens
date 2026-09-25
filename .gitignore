@@ -30,3 +30,6 @@ data/portal/
 
 # Local tool settings
 .claude/
+
+# Raw Kaggle downloads (fetch with tools/fetch_datasets.sh)
+data/kaggle/

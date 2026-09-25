@@ -22,7 +22,7 @@ _lock = threading.Lock()
 AFFECTS = {
     "geo_reroute": ("origin", "destination"), "buffer_stock": ("destination",), "weather_window": ("origin",),
     "carrier_switch": ("origin",), "rate_lock": ("origin",), "schedule_buffer": ("destination", "origin"),
-    "post_incident": ("origin", "destination"), "split_consignment": ("origin", "destination"),
+    "gpr_watch": ("origin", "destination"), "supplier_check": ("origin",),
 }
 
 # What each warehouse is asked to do, and what gets better once the issue is fixed.
@@ -45,14 +45,12 @@ TASKS = {
                         "origin": "Share the buffered ETA with the shipper so everyone works to the same date.",
                         "effects": ["Customers get a delivery date the lane can actually meet",
                                     "Fewer missed slots and penalty claims", "Receiving teams are staffed on the right day"]},
-    "post_incident": {"origin": "Confirm the cause of the last disruption is closed and report daily until departure.",
-                      "destination": "Watch the daily status and flag any change in the ETA straight away.",
-                      "effects": ["Early warning if the lane fails again", "Faster reaction time: hours instead of days",
-                                  "Clear record of the cause for the carrier review"]},
-    "split_consignment": {"origin": "Split the load across two bookings and label each part clearly.",
-                          "destination": "Expect two arrivals and receive each part separately.",
-                          "effects": ["A problem with one carrier no longer stops the whole load",
-                                      "Part of the cargo still arrives on time if one sailing slips"]},
+    "gpr_watch": {"origin": "Watch news for the origin country daily and confirm the port is operating normally before release.",
+                  "destination": "Watch news for the destination country daily and flag any port or customs change straight away.",
+                  "effects": ["Early warning if unrest reaches the port or the route", "Time to reroute before the cargo is committed",
+                              "A clear record of the geopolitical picture for the customer"]},
+    "supplier_check": {"origin": "Confirm with the supplier that the cargo is packed, documented and ready on the booked date.",
+                       "effects": ["No missed sailing because the cargo was not ready", "Problems surface before the booking, not at the gate"]},
 }
 
 
@@ -104,7 +102,7 @@ def draft(action: dict, result: dict, rec: dict) -> dict:
     subject = f"Action needed: {action['action']} · {rec.get('consignment_id')} ({lane})"
     body = (
         f"Consignment {rec.get('consignment_id')}: {rec.get('cargo') or ''}, {lane}.\n"
-        f"Current 7-day disruption risk: {imp['risk_before']:.0f} ({imp['band_before']}).\n\n"
+        f"Current disruption risk: {imp['risk_before']:.0f} ({imp['band_before']}).\n\n"
         f"Why: {action.get('rationale', '')}\n"
         f"Trigger: {action.get('trigger', '')}\n"
         f"When: {action.get('timeline', '')}\n\n"

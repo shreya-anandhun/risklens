@@ -1,0 +1,84 @@
+{
+  "shipments": {
+    "rows": 5000,
+    "period": [
+      "2024-01-01",
+      "2025-12-31"
+    ],
+    "disruption_rate": 0.613,
+    "by_weather": {
+      "Clear": 0.37,
+      "Fog": 0.481,
+      "Hurricane": 1.0,
+      "Rain": 0.42,
+      "Storm": 0.795
+    },
+    "planned_km_per_day": {
+      "Air": 8158.3,
+      "Rail": 945.0,
+      "Road": 1088.6,
+      "Sea": 483.3
+    },
+    "delay_days_when_disrupted": {
+      "Air": 0.6,
+      "Rail": 7.9,
+      "Road": 5.9,
+      "Sea": 14.5
+    },
+    "lanes": 64
+  },
+  "dataco": {
+    "rows": 180519,
+    "orders": 65752,
+    "period": [
+      "2015-01-01",
+      "2018-01-31"
+    ],
+    "late_share": 0.548,
+    "mean_delay_days_when_late": 1.62,
+    "by_service": [
+      {
+        "service": "First Class",
+        "orders": 27814,
+        "late_share": 0.953,
+        "scheduled_days": 1.0
+      },
+      {
+        "service": "Same Day",
+        "orders": 9737,
+        "late_share": 0.457,
+        "scheduled_days": 0.0
+      },
+      {
+        "service": "Second Class",
+        "orders": 35216,
+        "late_share": 0.766,
+        "scheduled_days": 2.0
+      },
+      {
+        "service": "Standard Class",
+        "orders": 107752,
+        "late_share": 0.381,
+        "scheduled_days": 4.0
+      }
+    ],
+    "by_market": {
+      "Africa": 0.546,
+      "Europe": 0.552,
+      "LATAM": 0.544,
+      "Pacific Asia": 0.55,
+      "USCA": 0.548
+    }
+  },
+  "suppliers": {
+    "rows": 100,
+    "purchase_orders": 2000,
+    "mean_on_time_rate": 0.801,
+    "po_on_time": 0.383
+  },
+  "gpr": {
+    "monthly_to": "2024-07",
+    "daily_to": "2024-08-19",
+    "countries": 16
+  }
+}

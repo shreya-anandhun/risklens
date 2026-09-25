@@ -1,6 +1,7 @@
 """Record / CSV validation for the portal. Tolerant of column naming, strict
 about values; bad rows are reported with row number, field and reason while
-good rows still get scored."""
+good rows still get scored. The Kaggle shipment file's own columns are
+understood as-is, so it can be uploaded straight into the What-if page."""
 from __future__ import annotations
 
 import re
@@ -8,39 +9,43 @@ from datetime import date
 
 import pandas as pd
 
-# A row needs an identifier (consignment_id or supplier_name) plus these.
-REQUIRED = ["lead_time_days", "reliability_score", "geopolitical_risk_index", "weather_risk_level"]
+from .config import WEATHER_CONDITIONS
+
+# A row needs an identifier plus these; weather can come as a condition, an index or a level.
+REQUIRED = ["reliability_score", "geopolitical_risk_index"]
+WEATHER_FIELDS = ["weather_condition", "weather_risk_index", "weather_risk_level"]
 ID_FIELDS = ["consignment_id", "supplier_name"]
 TEXT_FIELDS = [
     "consignment_id", "supplier_id", "supplier_name", "cargo", "product_category", "mode", "carrier",
     "origin_port", "origin_country", "region", "destination_port", "destination_country",
-    "destination_region", "route_via", "contract_type", "applied_alternative",
+    "destination_region", "route_via", "applied_alternative",
 ]
 DATE_FIELDS = ["dispatch_date", "eta_date"]
 NUMERIC_RANGES = {
-    "lead_time_days": (1, 365), "lead_time_std_days": (0, 365), "reliability_score": (0, 1),
-    "geopolitical_risk_index": (0, 100), "port_congestion_index": (0, 100), "weather_risk_index": (0, 100),
-    "price_swing_pct": (0, 100), "days_since_last_disruption": (0, 100_000),
-    "average_cost_per_unit": (0, 1_000_000), "annual_volume_units": (0, 1_000_000_000),
-    "units": (0, 1_000_000_000),
+    "reliability_score": (0, 1), "geopolitical_risk_index": (0, 100), "weather_risk_index": (0, 100),
+    "fuel_price_index": (0, 10), "distance_km": (0, 25_000), "weight_t": (0, 100_000), "lead_time_days": (0, 400),
+    "average_cost_per_unit": (0, 1_000_000), "units": (0, 1_000_000_000),
 }
-OPTIONAL = [c for c in TEXT_FIELDS + DATE_FIELDS + list(NUMERIC_RANGES) + ["single_source"] if c not in REQUIRED]
+OPTIONAL = [c for c in TEXT_FIELDS + DATE_FIELDS + list(NUMERIC_RANGES) + WEATHER_FIELDS + ["geopolitical_risk_score"] if c not in REQUIRED]
 ALIASES = {
     "consignment": "consignment_id", "shipment": "consignment_id", "shipment_id": "consignment_id", "id": "consignment_id",
     "supplier": "supplier_name", "shipper": "supplier_name", "vendor": "supplier_name",
     "from": "origin_port", "origin": "origin_port", "to": "destination_port", "destination": "destination_port",
-    "origin_region": "region", "lead_time": "lead_time_days", "leadtime": "lead_time_days",
+    "transport_mode": "mode", "shipping_mode": "mode", "category": "product_category",
+    "carrier_reliability_score": "reliability_score", "carrier_reliability": "reliability_score",
     "reliability": "reliability_score", "on_time_rate": "reliability_score", "otd": "reliability_score",
-    "geopolitical_risk": "geopolitical_risk_index", "geo_risk": "geopolitical_risk_index", "geopolitical": "geopolitical_risk_index",
-    "weather_risk": "weather_risk_level", "weather": "weather_risk_level",
-    "price_volatility": "price_swing_pct", "price_swing": "price_swing_pct",
-    "category": "product_category", "cost_per_unit": "average_cost_per_unit", "unit_cost": "average_cost_per_unit",
-    "unit_value": "average_cost_per_unit", "quantity": "units", "qty": "units",
-    "volume": "annual_volume_units", "annual_volume": "annual_volume_units",
-    "days_since_disruption": "days_since_last_disruption", "port_congestion": "port_congestion_index",
-    "dispatch": "dispatch_date", "departure_date": "dispatch_date", "eta": "eta_date",
+    "geopolitical_risk": "geopolitical_risk_index", "geopolitical": "geopolitical_risk_index",
+    "weather": "weather_condition", "weather_risk": "weather_risk_level",
+    "fuel_price": "fuel_price_index", "fuel": "fuel_price_index",
+    "distance": "distance_km", "weight_mt": "weight_t", "weight": "weight_t", "weight_tonnes": "weight_t",
+    "lead_time": "lead_time_days", "leadtime": "lead_time_days",
+    "cost_per_unit": "average_cost_per_unit", "unit_cost": "average_cost_per_unit", "unit_value": "average_cost_per_unit",
+    "quantity": "units", "qty": "units",
+    "date": "dispatch_date", "dispatch": "dispatch_date", "departure_date": "dispatch_date", "eta": "eta_date",
 }
 WEATHER = {"low", "medium", "high"}
+CONDITIONS = {c.lower(): c for c in WEATHER_CONDITIONS}
+IGNORED = {"disruption_occurred"}   # the outcome, when a file of past shipments is uploaded
 
 
 def _norm(col: str) -> str:
@@ -61,9 +66,12 @@ def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 def validate_dataframe(df: pd.DataFrame) -> dict:
     """Returns {'records': [...], 'errors': [...], 'warnings': [...], 'columns': {...}}."""
     df = normalise_columns(df)
-    missing = [c for c in REQUIRED if c not in df.columns]
+    has_geo = "geopolitical_risk_index" in df.columns or "geopolitical_risk_score" in df.columns
+    missing = [c for c in REQUIRED if c not in df.columns and not (c == "geopolitical_risk_index" and has_geo)]
     if not any(c in df.columns for c in ID_FIELDS):
         missing = ["consignment_id"] + missing
+    if not any(c in df.columns for c in WEATHER_FIELDS):
+        missing.append("weather_condition")
     if missing:
         return {"records": [], "errors": [{"row": None, "field": ",".join(missing),
                 "message": f"Missing required column(s): {', '.join(missing)}. Download the template for the expected layout."}],
@@ -73,7 +81,7 @@ def validate_dataframe(df: pd.DataFrame) -> dict:
                 "warnings": [], "columns": {"found": list(df.columns), "missing": []}}
 
     warnings = []
-    unknown = [c for c in df.columns if c not in REQUIRED + OPTIONAL]
+    unknown = [c for c in df.columns if c not in REQUIRED + OPTIONAL and c not in IGNORED]
     if unknown:
         warnings.append(f"Ignored unrecognised column(s): {', '.join(unknown)}")
     records, errors = [], []
@@ -83,6 +91,8 @@ def validate_dataframe(df: pd.DataFrame) -> dict:
             e["row"] = int(i) + 2  # 1-based + header
             errors.append(e)
         if not row_errors:
+            if "disruption_occurred" in df.columns and not _blank(row["disruption_occurred"]):
+                rec["_actual"] = int(float(row["disruption_occurred"]))
             records.append(rec)
     return {"records": records, "errors": errors, "warnings": warnings,
             "columns": {"found": list(df.columns), "missing": []}}
@@ -92,6 +102,12 @@ def validate_record(raw: dict) -> tuple[dict, list[dict]]:
     errors: list[dict] = []
     rec: dict = {}
     raw = {_norm(k): v for k, v in raw.items()}
+
+    if _blank(raw.get("geopolitical_risk_index")) and not _blank(raw.get("geopolitical_risk_score")):
+        try:
+            raw["geopolitical_risk_index"] = float(raw["geopolitical_risk_score"]) * 10   # 0-10 score in the Kaggle file
+        except (TypeError, ValueError):
+            errors.append({"field": "geopolitical_risk_score", "message": f"geopolitical_risk_score must be a number (got '{raw['geopolitical_risk_score']}')"})
 
     for key in TEXT_FIELDS:
         if not _blank(raw.get(key)):
@@ -106,7 +122,7 @@ def validate_record(raw: dict) -> tuple[dict, list[dict]]:
         try:
             rec[key] = date.fromisoformat(str(v).strip()[:10]).isoformat()
         except ValueError:
-            errors.append({"field": key, "message": f"{key} must be a date like 2026-10-14 (got '{v}')"})
+            errors.append({"field": key, "message": f"{key} must be a date like 2025-12-14 (got '{v}')"})
     if "dispatch_date" in rec and "eta_date" in rec and rec["eta_date"] < rec["dispatch_date"]:
         errors.append({"field": "eta_date", "message": "ETA cannot be before the dispatch date"})
 
@@ -128,19 +144,21 @@ def validate_record(raw: dict) -> tuple[dict, list[dict]]:
             continue
         rec[key] = x
 
+    cond = raw.get("weather_condition")
+    if not _blank(cond):
+        c = CONDITIONS.get(str(cond).strip().lower())
+        if not c:
+            errors.append({"field": "weather_condition", "message": f"weather_condition must be one of {', '.join(WEATHER_CONDITIONS)} (got '{cond}')"})
+        else:
+            rec["weather_condition"] = c
     w = raw.get("weather_risk_level")
-    if _blank(w):
-        if "weather_risk_index" not in rec:
-            errors.append({"field": "weather_risk_level", "message": "weather_risk_level is required (low / medium / high)"})
-    else:
+    if not _blank(w):
         w = str(w).strip().lower()
         if w not in WEATHER:
             errors.append({"field": "weather_risk_level", "message": f"weather_risk_level must be low, medium or high (got '{w}')"})
         else:
             rec["weather_risk_level"] = w
-
-    ss = raw.get("single_source")
-    if not _blank(ss):
-        rec["single_source"] = 1 if str(ss).strip().lower() in ("1", "1.0", "true", "yes", "y") else 0
+    if not any(k in rec for k in WEATHER_FIELDS) and not any(e["field"] in WEATHER_FIELDS for e in errors):
+        errors.append({"field": "weather_condition", "message": f"weather_condition is required ({', '.join(WEATHER_CONDITIONS)})"})
 
     return rec, errors

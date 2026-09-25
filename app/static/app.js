@@ -3,14 +3,17 @@
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const state = { meta: null, overview: null, rows: [], sort: { key: "risk_score", dir: -1 }, band: "all", q: "", charts: {} };
-  const REGIONS = ["South Asia", "Southeast Asia", "East Asia", "Middle East", "Europe", "Africa", "North America", "Latin America"];
-  const CATEGORIES = ["Electronics", "Raw Materials", "Machinery", "Chemicals", "Packaging"];
+  const REGIONS = ["East Asia", "Southeast Asia", "Middle East", "Europe", "North America"];
+  const CATEGORIES = ["Electronics", "Textiles", "Perishables", "Pharmaceuticals", "Automotive"];
   const MODES = ["Sea", "Air", "Road", "Rail"];
+  const PORT_LIST = ["Antwerp", "Busan", "Dubai", "Hamburg", "Los Angeles", "Marseille", "Rotterdam", "Shanghai", "Singapore"];
+  const WEATHER_LIST = ["Clear", "Rain", "Fog", "Storm", "Hurricane"];
   const BAND_COLOR = { low: "#15803D", elevated: "#B45309", high: "#B91C1C" };
 
   // ---------- utils ----------
   const fmtUSD = (v) => { v = +v || 0; const a = Math.abs(v), s = v < 0 ? "-" : ""; if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(a >= 1e7 ? 1 : 2) + "M"; if (a >= 1e3) return s + "$" + (a / 1e3).toFixed(0) + "K"; return s + "$" + a.toFixed(0); };
   const fmtDate = (iso) => { if (!iso) return "—"; const d = new Date(iso + "T00:00:00"); return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }); };
+  const fmtDateY = (iso) => { if (!iso) return "—"; const d = new Date(String(iso).length === 7 ? iso + "-01T00:00:00" : iso + "T00:00:00"); return d.toLocaleDateString("en-GB", String(iso).length === 7 ? { month: "short", year: "numeric" } : { day: "numeric", month: "short", year: "numeric" }); };
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   const toast = (msg) => { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 2800); };
@@ -35,7 +38,7 @@
 
   // ---------- navigation ----------
   const PAGES = {
-    overview: ["Overview", () => { const s = state.overview?.summary; return s ? `${s.n} active consignments · ${s.in_transit} in transit, ${s.scheduled} scheduled · 7-day risk outlook` : ""; }],
+    overview: ["Overview", () => { const s = state.overview?.summary; return s ? `${s.n} active consignments · ${s.in_transit} in transit, ${s.scheduled} scheduled · as of ${fmtDateY(s.as_of)}` : ""; }],
     consignments: ["Consignments", () => "Your consignment book. Click a consignment for its cargo profile: what it is, the load, and how it must be handled."],
     actions: ["Recommended actions", () => "Mitigations across your consignments, ranked by net benefit."],
     whatif: ["What-if analysis", () => "Test a planned consignment or a batch before you book it."],
@@ -61,7 +64,7 @@
     const c = meta.company;
     $("#company").innerHTML = `<span class="company-mark">${esc(c.short)}</span><div><div class="company-name">${esc(c.name)}</div><div class="company-team">${esc(c.team)}</div></div>`;
     $("#model-pill").innerHTML = `<span class="dot"></span><span>Risk engine live</span>`;
-    $("#sidebar-meta").innerHTML = `Signals refreshed daily<br>Model updated ${esc(new Date(meta.model.trained_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}`;
+    $("#sidebar-meta").innerHTML = `${meta.sources.length} Kaggle datasets · as of ${esc(fmtDateY(meta.as_of))}<br>Model AUC ${meta.model.auc_roc.toFixed(2)} on ${meta.model.n_test.toLocaleString()} test shipments`;
     updateCounts();
   }
   function updateCounts() { $("#nav-count").textContent = state.rows.length; $("#nav-actions").textContent = state.overview.top_actions.length; }
@@ -87,14 +90,26 @@
     const kpis = [
       ["Active consignments", `${s.n}`, `${fmtUSD(s.total_value_usd)} cargo value · ${s.in_transit} in transit · ${s.departing_7d} departing in 7 days`, ""],
       ["Consignments at risk", `${s.n_at_risk} of ${s.n}`, `${fmtUSD(s.value_at_risk_usd)} (${s.pct_value_at_risk}%) of cargo value is High or Elevated · ${s.bands.high} High`, s.bands.high ? "high" : s.n_at_risk ? "elevated" : "low"],
-      ["Expected disruption loss", fmtUSD(s.expected_loss_usd), "Next 7 days: probability of disruption × estimated cost of the delay", ""],
+      ["Expected disruption loss", fmtUSD(s.expected_loss_usd), "Probability of disruption × estimated cost of the delay", ""],
       ["Savings from alternatives", fmtUSD(s.alternative_savings_usd), `${s.alternatives_available} consignment${s.alternatives_available === 1 ? " has" : "s have"} a better route, carrier or timing`, s.alternative_savings_usd > 0 ? "low" : ""],
     ];
     $("#kpi-grid").innerHTML = kpis.map(([l, v, sub, c]) => `<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value ${c}" data-final="${esc(v)}">${esc(v)}</div><div class="kpi-sub">${sub}</div></div>`).join("");
     $$("#kpi-grid .kpi-value").forEach((el) => countUp(el, el.dataset.final));
-    $("#catch-rate").textContent = o.catch_rate == null ? "" : `RiskLens rated ${o.catch_rate}% of these as Elevated or High in the 7 days before they happened.`;
-    $("#recent-disruptions").innerHTML = `<table class="table"><thead><tr><th>Date</th><th>Lane</th><th>Cause</th><th class="num">Cost</th><th>Warned</th></tr></thead><tbody>${o.recent_disruptions.map((d) => `<tr><td class="mono">${fmtDate(d.date)}</td><td>${esc(d.lane)}<div class="sub mono">${esc(d.consignment_id)}</div></td><td>${esc(d.disruption_reason)}</td><td class="num">${fmtUSD(d.recovery_cost_usd)}</td><td>${d.flagged_in_advance ? '<span class="chip low">yes</span>' : '<span class="chip high">missed</span>'}</td></tr>`).join("")}</tbody></table>`;
+    $("#catch-rate").textContent = o.catch_rate == null ? "" : `Real disrupted shipments from the dataset on the same lanes as your book. Across all ${o.catch_n.toLocaleString()} disrupted shipments from ${fmtDateY(o.catch_window[0])}, which the model never trained on, RiskLens rated ${o.catch_rate}% Elevated or High.`;
+    $("#recent-disruptions").innerHTML = `<table class="table"><thead><tr><th>Date</th><th>Lane</th><th>Main signals</th><th class="num">Model score</th><th class="num">Est. cost</th><th>Warned</th></tr></thead><tbody>${o.recent_disruptions.map((d) => `<tr><td class="mono">${fmtDate(d.date)}</td><td>${esc(d.lane)}<div class="sub mono">${esc(d.shipment_id)} · ${esc(d.mode)}</div></td><td>${esc(d.disruption_reason)}</td><td class="num">${d.risk_score.toFixed(0)}</td><td class="num">${fmtUSD(d.recovery_cost_usd)}</td><td>${d.flagged_in_advance ? '<span class="chip low">yes</span>' : '<span class="chip high">missed</span>'}</td></tr>`).join("")}</tbody></table>`;
+    renderSources(o);
     renderGlobe();
+  }
+  function renderSources(o) {
+    const m = state.meta.model, g = o.gpr_global;
+    const per = (p) => (!p ? "" : `${fmtDateY(p[0])} – ${fmtDateY(p[1])}`);
+    $("#data-sources").innerHTML = `<div class="ds-grid">${o.sources.map((x) => `<div class="ds">
+        <div class="ds-n">${esc(x.name)}</div>
+        <div class="ds-m">${x.rows ? `<b>${x.rows.toLocaleString()}</b> rows` : "<b>Monthly</b> readings"}${x.period ? ` · ${esc(per(x.period))}` : ""}</div>
+        <div class="ds-u">${esc(x.used_for)}</div>
+        <a class="ds-k mono" href="https://www.kaggle.com/datasets/${esc(x.kaggle)}" target="_blank" rel="noopener">kaggle.com/datasets/${esc(x.kaggle)}</a></div>`).join("")}</div>
+      <div class="ds-foot"><span><b>Model</b> XGBoost trained on ${m.n_train.toLocaleString()} shipments, tested on ${m.n_test.toLocaleString()} later ones (${esc(per(m.test_window))}): AUC ${m.auc_roc.toFixed(2)}, ${Math.round(m.recall * 100)}% of disruptions caught.</span>
+      ${g ? `<span><b>World GPR</b> 7-day average ${g.ma7.toFixed(0)} on ${esc(fmtDateY(g.day))} against a 1-year average of ${g.year_average.toFixed(0)}${g.events.length ? ` · latest flagged event: ${esc(g.events[g.events.length - 1].event)}` : ""}</span>` : ""}</div>`;
   }
 
   // ---------- actions page ----------
@@ -113,7 +128,7 @@
       <div class="im-head"><span class="im-kicker">If this is fixed</span><span class="tag">expected effect on ${esc(a.consignment_id)}</span></div>
       <div class="im-grid">
         <div class="im-block">
-          <span class="im-l">7-day risk</span>
+          <span class="im-l">Disruption risk</span>
           <div class="im-flow"><span class="im-score" style="--c:${BAND_COLOR[m.band_before]}">${m.risk_before.toFixed(0)}<small>${m.band_before}</small></span>
             <span class="im-arrow"><i></i></span>
             <span class="im-score after" style="--c:${BAND_COLOR[m.band_after]}">${m.risk_after.toFixed(0)}<small>${m.band_after}</small></span></div>
@@ -210,12 +225,11 @@
   };
   const modeKey = (m) => ({ sea: "sea", air: "air", road: "road", rail: "rail" }[String(m || "").toLowerCase()] || "sea");
   const RGB = { low: "34,197,94", elevated: "251,146,60", high: "248,64,64" };  // bright enough to read on the #235696 ocean
-  const FACTOR_NAME = { weather_risk_index: "Weather index", geopolitical_risk_index: "Geopolitical index", port_congestion_index: "Port congestion" };
+  const FACTOR_NAME = { weather_risk_index: "Weather severity", geopolitical_risk_index: "Geopolitical risk" };
   const SITUATION = {
-    weather_risk: "Severe weather risk along the lane", geopolitical_risk: "Elevated geopolitical and customs risk on the corridor",
-    disruption_recency: "This lane was disrupted recently", lead_time_risk: "Long lead time leaves little room to recover",
-    lead_time_variability: "Transit times on this lane are inconsistent", price_volatility: "Fuel and commodity prices are swinging",
-    reliability_risk: "Carrier on-time record is weak",
+    weather_risk: "Severe weather on the route", geopolitical_risk: "High geopolitical risk on the corridor",
+    reliability_risk: "Carrier reliability is weak", fuel_price_risk: "Fuel prices are near the top of the range",
+    distance_risk: "Long route with more time exposed",
   };
   const levelBand = (v) => (v >= 60 ? "high" : v >= 40 ? "elevated" : "low");
   // spherical helpers
@@ -232,24 +246,31 @@
   const G = { g: null, band: "all", focus: null, mouse: [0, 0], ready: false, loading: null, near: false, rotateWanted: true, idle: null };
 
   function signalBars(i) {
-    const rows = [["Weather", i.weather_risk_index], ["Geopolitical", i.geopolitical_risk_index], ["Port congestion", i.port_congestion_index]].filter(([, v]) => v != null);
+    const rows = [[i.weather_condition || "Weather", i.weather_risk_index], ["Geopolitical", i.geopolitical_risk_index],
+      ["Carrier risk", i.reliability_score != null ? (1 - i.reliability_score) * 100 : null], ["Fuel price", i.fuel_price_index != null ? ((i.fuel_price_index - 1.2) / 3.3) * 100 : null]].filter(([, v]) => v != null);
     return `<div class="gt-bars">${rows.map(([k, v]) => `<span>${k}</span><span class="tr"><span style="width:${Math.min(100, v)}%;background:${BAND_COLOR[levelBand(v)]}"></span></span><span class="n">${(+v).toFixed(0)}</span>`).join("")}</div>`;
   }
   function lastDisruption(r) {
-    const d = state.overview.recent_disruptions.find((x) => x.consignment_id === r.consignment_id);
-    const days = r.inputs.days_since_last_disruption;
-    if (days == null || days >= 999) return "No disruption on record for this lane.";
-    return `Last lane disruption ${days} day${days === 1 ? "" : "s"} ago${d ? ` · ${esc(d.disruption_reason)}` : ""}.`;
+    const l = r.context?.lane;
+    if (!l) return "No shipments on this lane in the dataset.";
+    const last = l.last_disruption;
+    return `Lane history: ${l.disrupted} of ${l.shipments} dataset shipments disrupted (${Math.round(l.disrupted_share * 100)}%)${last ? ` · last on ${esc(fmtDate(last.date))}, ${esc(last.weather.toLowerCase())}` : ""}.`;
   }
+  function gprLine(g, label) {
+    if (!g) return "";
+    const hot = g.ratio >= 1.25, c = hot ? BAND_COLOR.high : g.ratio >= 1 ? BAND_COLOR.elevated : BAND_COLOR.low;
+    return `<div class="gt-gpr"><span>${label || "GPR index"} · ${esc(g.country)}${g.proxy ? " (nearest covered)" : ""}</span><b style="color:${c}">${g.value.toFixed(2)}</b><em>${g.ratio.toFixed(1)}× its 2019–24 average · ${esc(fmtDateY(g.month))}</em></div>`;
+  }
+  const relText = (r) => (r.inputs?.reliability_score != null ? `carrier reliability ${(+r.inputs.reliability_score).toFixed(2)}` : "");
   function headline(r) { return r.risk_band === "low" ? "Operating normally" : SITUATION[r.top_driver?.key] || "Risk signals elevated"; }
   function statusLine(r) { const j = r.journey; if (!j) return ""; return j.status === "In transit" ? `In transit · day ${j.elapsed_days} of ${j.total_days} · ETA ${fmtDate(j.eta_date)}` : j.status === "Scheduled" ? `Departs ${fmtDate(j.dispatch_date)} · ETA ${fmtDate(j.eta_date)}` : "Arrived"; }
 
   function tipConsignment(r, kind) {
     return `<div class="gt-top"><span class="gt-kind">${ICONS[modeKey(r.mode)]}${kind}</span>${chip(r.risk_band)}</div>
       <div class="gt-title">${esc(routeText(r))}</div><div class="gt-sub"><span class="mono">${esc(r.consignment_id)}</span> · ${esc(r.cargo || "")} · ${fmtUSD(r.cargo_value_usd)}</div>
-      <div class="gt-sec"><div class="gt-headline" style="--c:${BAND_COLOR[r.risk_band]}">${esc(headline(r))}</div><div class="gt-sub">${esc(statusLine(r))} · ${esc(r.mode || "")} with ${esc(r.carrier || "—")}</div></div>
+      <div class="gt-sec"><div class="gt-headline" style="--c:${BAND_COLOR[r.risk_band]}">${esc(headline(r))}</div><div class="gt-sub">${esc(statusLine(r))} · ${esc(r.mode || "")} · ${esc(relText(r))}</div></div>
       <div class="gt-sec"><div class="gt-sec-h">Signals on this lane</div>${signalBars(r.inputs)}<div class="gt-sub" style="margin-top:6px">${lastDisruption(r)}</div></div>
-      <div class="gt-row" style="margin-top:6px"><span>7-day risk <b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></span><span>${r.best_alternative ? "Best option: " + esc(r.best_alternative.title) : "Stay on current plan"}</span></div>
+      <div class="gt-row" style="margin-top:6px"><span>Disruption risk <b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></span><span>${r.best_alternative ? "Best option: " + esc(r.best_alternative.title) : "Stay on current plan"}</span></div>
       <div class="gt-foot">Click to open the consignment →</div>`;
   }
   function tipPlace(p) {
@@ -257,13 +278,14 @@
     return `<div class="gt-top"><span class="gt-kind">${p.dest ? ICONS.flag + "Destination" : ICONS.anchor + "Origin"}${p.dest && p.origin ? " & origin" : ""}</span>${chip(worst.r.risk_band)}</div>
       <div class="gt-title">${esc(p.name)}</div><div class="gt-sub">${esc(p.country)}</div>
       <div class="gt-about">${esc(p.about)}</div>
+      ${p.gpr ? `<div class="gt-sec"><div class="gt-sec-h">Real-world geopolitical index</div>${gprLine(p.gpr, "GPR")}</div>` : ""}
       <div class="gt-sec"><div class="gt-sec-h">Situation</div><div class="gt-headline" style="--c:${BAND_COLOR[worst.r.risk_band]}">${esc(headline(worst.r))}</div>${signalBars(worst.r.inputs)}<div class="gt-sub" style="margin-top:6px">${lastDisruption(worst.r)}</div></div>
       <div class="gt-sec"><div class="gt-sec-h">Consignments here</div>${p.items.map(({ r, role }) => `<div class="gt-row"><span><b>${esc(r.consignment_id)}</b> ${role === "dest" ? "arriving" : "departing"} · ${role === "dest" ? "ETA " + fmtDate(r.journey?.eta_date) : fmtDate(r.journey?.dispatch_date)}</span><span style="color:${BAND_COLOR[r.risk_band]};font-weight:700">${r.risk_score.toFixed(0)}</span></div>`).join("")}</div>`;
   }
   function tipHotspot(h) {
     return `<div class="gt-top"><span class="gt-kind">${ICONS.alert}Risk hotspot</span>${chip(h.band)}</div>
       <div class="gt-title">${esc(h.name)}</div><div class="gt-about">${esc(h.about)}</div>
-      <div class="gt-sec"><div class="gt-sec-h">Current signal</div><div class="gt-bars"><span>${FACTOR_NAME[h.factor]}</span><span class="tr"><span style="width:${Math.min(100, h.level)}%;background:${BAND_COLOR[h.band]}"></span></span><span class="n">${h.level.toFixed(0)}</span></div></div>
+      <div class="gt-sec"><div class="gt-sec-h">Current signal</div><div class="gt-bars"><span>${FACTOR_NAME[h.factor]}</span><span class="tr"><span style="width:${Math.min(100, h.level)}%;background:${BAND_COLOR[h.band]}"></span></span><span class="n">${h.level.toFixed(0)}</span></div>${h.gpr ? gprLine(h.gpr, "GPR") : ""}</div>
       <div class="gt-sec"><div class="gt-sec-h">Consignments passing</div>${h.items.map((r) => `<div class="gt-row"><span><b>${esc(r.consignment_id)}</b> ${esc(routeText(r))}</span><span style="color:${BAND_COLOR[r.risk_band]};font-weight:700">${r.risk_score.toFixed(0)}</span></div>`).join("")}</div>`;
   }
   function showTip(html) { const t = $("#globe-tip"); t.innerHTML = html; t.classList.add("show"); placeTip(); }
@@ -523,7 +545,7 @@
     $("#board").innerHTML = heads.map((h) => `<div class="bh">${h}</div>`).join("") + state.rows.map((r) => `
       <div class="br" data-cargo="${esc(r.consignment_id)}" title="Open cargo profile">
         <div><span class="cid">${esc(r.consignment_id)}</span><span class="cargo" title="${esc(r.cargo)}">${esc(r.cargo || r.supplier_name || "")}</span><span class="route-sub">${fmtUSD(r.cargo_value_usd)} · ${esc(r.supplier_name || "")}</span></div>
-        <div><span class="route">${route(r)}</span><span class="route-sub"><span class="mode">${esc(r.mode || "—")}</span>${esc(r.carrier || "")}</span></div>
+        <div><span class="route">${route(r)}</span><span class="route-sub"><span class="mode">${esc(r.mode || "—")}</span>${esc(r.inputs?.weather_condition || "")}${r.inputs?.reliability_score != null ? ` · reliability ${(+r.inputs.reliability_score).toFixed(2)}` : ""}</span></div>
         <div>${journeyHTML(r.journey)}</div>
         <div>${sparkline(r.trend, r.risk_band)}</div>
         <div class="risk-cell"><span class="risk-num" style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(0)}</span>${chip(r.risk_band)}</div>
@@ -535,27 +557,21 @@
   const opt = (list) => list.map((x) => `${x}:${x}`);
   const FIELDS = [
     ["Shipment"],
-    ["cargo", "Cargo", "text", { placeholder: "e.g. Power semiconductors" }], ["supplier_name", "Shipper / supplier", "text", {}],
+    ["cargo", "Cargo", "text", { placeholder: "e.g. Consumer electronics" }], ["supplier_name", "Supplier", "text", {}],
     ["product_category", "Category", "select", opt(CATEGORIES)], ["mode", "Mode", "select", opt(MODES)],
-    ["carrier", "Carrier", "text", {}], ["single_source", "Single carrier, no backup", "select", ["0:No", "1:Yes"]],
-    ["units", "Units in consignment", "number", { min: 0 }], ["average_cost_per_unit", "Value per unit (USD)", "number", { min: 0, step: "any" }],
+    ["weight_t", "Weight (tonnes)", "number", { min: 0, step: "any" }], ["average_cost_per_unit", "Value per unit (USD)", "number", { min: 0, step: "any" }],
     ["Route"],
-    ["origin_port", "From (port / city)", "text", {}], ["destination_port", "To (port / city)", "text", {}],
-    ["origin_country", "Origin country", "text", {}], ["destination_country", "Destination country", "text", {}],
-    ["region", "Origin region", "select", opt(REGIONS)], ["destination_region", "Destination region", "select", opt(REGIONS)],
+    ["origin_port", "From", "select", opt(PORT_LIST)], ["destination_port", "To", "select", opt(PORT_LIST)],
     ["dispatch_date", "Dispatch date", "date", {}], ["eta_date", "ETA", "date", {}],
-    ["Operational"],
-    ["lead_time_days", "Lead time, order to delivery (days)", "number", { min: 1, max: 365 }], ["lead_time_std_days", "Lead time spread, std dev (days)", "number", { min: 0, step: "any" }],
-    ["reliability_score", "Carrier on-time rate (0–1)", "number", { min: 0, max: 1, step: "any" }], ["annual_volume_units", "Shipper annual volume (units)", "number", { min: 0 }],
-    ["External signals"],
-    ["geopolitical_risk_index", "Geopolitical risk index (0–100)", "number", { min: 0, max: 100, step: "any" }], ["port_congestion_index", "Port congestion index (0–100)", "number", { min: 0, max: 100, step: "any" }],
-    ["weather_risk_index", "Weather risk index (0–100)", "number", { min: 0, max: 100, step: "any", placeholder: "or use level" }], ["weather_risk_level", "Weather risk level", "select", ["low:Low", "medium:Medium", "high:High"]],
-    ["price_swing_pct", "Fuel & commodity price swing, 30 days (%)", "number", { min: 0, max: 100, step: "any" }], ["days_since_last_disruption", "Days since last disruption on lane", "number", { min: 0, placeholder: "none on record" }],
+    ["distance_km", "Distance (km)", "number", { min: 0, step: "any" }], ["lead_time_days", "Planned lead time (days)", "number", { min: 0, max: 400 }],
+    ["Signals"],
+    ["reliability_score", "Carrier reliability (0–1)", "number", { min: 0, max: 1, step: "any" }], ["geopolitical_risk_index", "Geopolitical risk (0–100)", "number", { min: 0, max: 100, step: "any" }],
+    ["weather_condition", "Weather", "select", opt(WEATHER_LIST)], ["fuel_price_index", "Fuel price index (1.2–4.5)", "number", { min: 0, max: 10, step: "any" }],
   ];
   function fieldHTML([key, label, type, opts], rec) {
     if (!label) return `<div class="form-section span-2">${key}</div>`;
     const v = rec[key] ?? "";
-    if (type === "select") return `<label>${label}<select name="${key}" class="input">${key === "weather_risk_level" || key === "single_source" ? "" : '<option value="">—</option>'}${opts.map((o) => { const i = o.indexOf(":"); const val = o.slice(0, i), txt = o.slice(i + 1); return `<option value="${esc(val)}" ${String(v) === val ? "selected" : ""}>${esc(txt)}</option>`; }).join("")}</select></label>`;
+    if (type === "select") return `<label>${label}<select name="${key}" class="input">${key === "weather_condition" ? "" : '<option value="">—</option>'}${opts.map((o) => { const i = o.indexOf(":"); const val = o.slice(0, i), txt = o.slice(i + 1); return `<option value="${esc(val)}" ${String(v) === val ? "selected" : ""}>${esc(txt)}</option>`; }).join("")}</select></label>`;
     return `<label>${label}<input name="${key}" type="${type}" class="input" value="${esc(v)}" ${Object.entries(opts).map(([k, x]) => `${k}="${esc(x)}"`).join(" ")}></label>`;
   }
   const formToRecord = (form) => { const o = {}; new FormData(form).forEach((v, k) => { if (v !== "") o[k] = v; }); return o; };
@@ -569,7 +585,7 @@
   function fmtN(v, d = 1) { return v == null || v === "" ? "—" : (+v).toFixed(d); }
   function alternativesHTML(r, { applyable }) {
     if (!r.alternatives) return "";
-    const cur = `<tr class="current"><td><div class="alt-title">Current plan${r.applied_alternative ? '<span class="badge-applied">updated</span>' : ""}</div><div class="alt-desc">${esc(r.mode || "")} · ${esc(r.carrier || "carrier not set")} · ${esc(routeText(r))}${r.route_via ? ` via ${esc(r.route_via)}` : ""}</div></td><td class="num"><b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></td><td class="num">—</td><td class="num">—</td><td class="num">${fmtUSD(r.expected_loss_usd)}</td><td class="num">—</td>${applyable ? "<td></td>" : ""}</tr>`;
+    const cur = `<tr class="current"><td><div class="alt-title">Current plan${r.applied_alternative ? '<span class="badge-applied">updated</span>' : ""}</div><div class="alt-desc">${esc(r.mode || "")} · ${esc(r.inputs?.weather_condition || "")} · ${esc(routeText(r))}${r.route_via ? ` via ${esc(r.route_via)}` : ""}</div></td><td class="num"><b style="color:${BAND_COLOR[r.risk_band]}">${r.risk_score.toFixed(1)}</b></td><td class="num">—</td><td class="num">—</td><td class="num">${fmtUSD(r.expected_loss_usd)}</td><td class="num">—</td>${applyable ? "<td></td>" : ""}</tr>`;
     const rows = r.alternatives.map((a) => `<tr class="${a.recommended ? "rec" : ""}">
       <td><div class="alt-title">${esc(a.title)}${a.recommended ? '<span class="badge-rec">Recommended</span>' : ""}</div><div class="alt-desc">${esc(a.description)}</div><div class="diffs">${a.diffs.map((d) => `<span class="diff">${esc(d)}</span>`).join("")}</div></td>
       <td class="num"><b style="color:${BAND_COLOR[a.risk_band]}">${a.risk_score.toFixed(1)}</b><div class="delta ${a.delta_risk <= 0 ? "down" : "up"}">${a.delta_risk > 0 ? "+" : ""}${a.delta_risk.toFixed(1)}</div></td>
@@ -644,30 +660,31 @@
         <div><span>Distance</span><b>${geo ? "≈ " + geo.km.toLocaleString() + " km" : "—"}</b></div>
         <div><span>Transit</span><b>${j.total_days ? j.total_days + " days" : "—"}</b></div>
         <div><span>Mode</span><b><span class="mode">${esc(r.mode || "—")}</span></b></div>
-        <div><span>Carrier</span><b>${esc(r.carrier || "—")}</b></div>
+        <div><span>Carrier reliability</span><b>${r.inputs?.reliability_score != null ? (+r.inputs.reliability_score).toFixed(2) : "—"}</b></div>
         <div><span>Hotspots on route</span><b>${geo ? geo.hot.length : "—"}</b></div>
       </div>
     </div>`;
   }
   function scoreHTML(r) {
     const c = BAND_COLOR[r.risk_band], best = r.best_alternative;
-    // piecewise scale so the Low and Elevated bands are readable: 0-12 → 0-25%, 12-30 → 25-50%, 30-100 → 50-100%
-    const pos = (v) => (v <= 12 ? (v / 12) * 25 : v <= 30 ? 25 + ((v - 12) / 18) * 25 : 50 + ((Math.min(100, v) - 30) / 70) * 50);
+    const [e0, h0] = [state.meta.risk_bands[1].min, state.meta.risk_bands[2].min];
+    // piecewise scale with each band a third of the track
+    const pos = (v) => (v <= e0 ? (v / e0) * 33.3 : v <= h0 ? 33.3 + ((v - e0) / (h0 - e0)) * 33.3 : 66.6 + ((Math.min(100, v) - h0) / (100 - h0)) * 33.4);
     const bandText = { low: "Low risk: normal tracking", elevated: "Elevated: watch closely", high: "High: act before it slips" }[r.risk_band];
     return `<div class="sh card-lite">
-      <div class="sh-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b class="sh-num" data-final="${r.risk_score.toFixed(1)}">${r.risk_score.toFixed(1)}</b><span>7-day risk</span></div></div>
+      <div class="sh-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b class="sh-num" data-final="${r.risk_score.toFixed(1)}">${r.risk_score.toFixed(1)}</b><span>Disruption risk</span></div></div>
       <div class="sh-main">
         <div class="sh-row">${chip(r.risk_band)}<span class="sh-band">${bandText}</span></div>
         <div class="sh-scale">
           <div class="sh-track"><span class="z low"></span><span class="z elevated"></span><span class="z high"></span></div>
           <div class="sh-mark now" style="--x:${pos(r.risk_score)}%"><i style="background:${c}"></i><em>Now ${r.risk_score.toFixed(0)}</em></div>
           ${best ? `<div class="sh-mark alt" style="--x:${pos(best.risk_score)}%"><i></i><em>With best option ${best.risk_score.toFixed(0)}</em></div>` : ""}
-          <div class="sh-ticks"><span style="left:0">0</span><span style="left:25%">12</span><span style="left:50%">30</span><span style="left:100%">100</span></div>
+          <div class="sh-ticks"><span style="left:0">0</span><span style="left:33.3%">${e0}</span><span style="left:66.6%">${h0}</span><span style="left:100%">100</span></div>
         </div>
         <div class="sh-stats">
           <div><span>Cargo value</span><b>${fmtUSD(r.cargo_value_usd)}</b></div>
           <div><span>Cost if disrupted</span><b>${fmtUSD(r.estimated_disruption_cost_usd)}</b></div>
-          <div><span>Expected loss (7 days)</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div>
+          <div><span>Expected loss</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div>
           <div><span>Confidence</span><b>${r.confidence.toFixed(0)}%</b><i class="sh-conf"><span style="--w:${r.confidence}%;width:${r.confidence}%"></span></i></div>
         </div>
       </div>
@@ -678,7 +695,7 @@
     const rows = [{ title: "Current plan", risk: r.risk_score, band: r.risk_band, net: 0, cur: true }, ...alts.map((a) => ({ title: a.title, risk: a.risk_score, band: a.risk_band, net: a.net_benefit_usd, rec: a.recommended, delta: a.delta_risk, eta: a.eta_delta_days }))];
     const maxNet = Math.max(1, ...rows.map((x) => Math.abs(x.net)));
     return `<div class="cmp card-lite"><div class="section-title"><span>Compare options</span><span class="tag">risk after the change · net benefit</span></div>
-      <div class="cmp-head"><span></span><span>7-day risk</span><span>Net benefit</span></div>
+      <div class="cmp-head"><span></span><span>Disruption risk</span><span>Net benefit</span></div>
       ${rows.map((x, i) => `<div class="cmp-row ${x.cur ? "cur" : ""} ${x.rec ? "rec" : ""}" style="animation-delay:${0.08 * i}s">
         <span class="cmp-t">${x.rec ? '<span class="star">★</span>' : ""}${esc(x.title)}${x.eta ? `<small>${days(x.eta)}</small>` : ""}</span>
         <span class="cmp-risk"><span class="cmp-bar"><span style="--w:${Math.max(1.5, x.risk)}%;background:${BAND_COLOR[x.band]}"></span>${x.cur ? "" : `<i class="cmp-ghost" style="left:${r.risk_score}%"></i>`}</span><b style="color:${BAND_COLOR[x.band]}">${x.risk.toFixed(0)}</b>${x.cur ? "" : `<em class="${x.delta <= 0 ? "down" : "up"}">${x.delta > 0 ? "+" : ""}${x.delta.toFixed(0)}</em>`}</span>
@@ -735,7 +752,7 @@
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   };
   const ic = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${HICON[k] || HICON.box}</svg>`;
-  const CAT_TILE = { Electronics: "esd", "Raw Materials": "heavy", Machinery: "secure", Chemicals: "hazard", Packaging: "box" };
+  const CAT_TILE = { Electronics: "esd", Textiles: "box", Perishables: "temp", Pharmaceuticals: "seal", Automotive: "heavy" };
   const plural = (n, w) => `${Number(n).toLocaleString()} ${w}${n === 1 || /s$/.test(w) ? "" : "s"}`;
   const fmtT = (t) => (t >= 100 ? Math.round(t).toLocaleString() : t.toFixed(1)) + " t";
 
@@ -746,7 +763,7 @@
       const { consignment: c, profile: p } = await api(`/api/consignments/${encodeURIComponent(cid)}/cargo`);
       $("#drawer-eyebrow").textContent = `${c.consignment_id} · Cargo profile`;
       $("#drawer-title").textContent = c.cargo || p.commodity;
-      $("#drawer-sub").textContent = `${routeText(c)} · ${c.mode || ""} with ${c.carrier || "—"}`;
+      $("#drawer-sub").textContent = `${routeText(c)} · ${c.mode || ""}${c.supplier_name ? " · supplier " + c.supplier_name : ""}`;
       const body = $("#drawer-body");
       body.innerHTML = `<div class="drawer-stack cargo-profile">${cargoHero(c, p)}${cargoLoad(p)}${cargoCarried(c, p)}${cargoHandling(p)}${cargoSensors(c, p)}${cargoDocs(p)}</div>`;
       body.scrollTop = 0;
@@ -792,7 +809,7 @@
   }
   function cargoCarried(c, p) {
     const steps = [["box", "Packed", p.packing], ["container", "Equipment", `${p.load.equipment_count} × ${p.equipment.name}`], ["ship", "Stowage", p.stowage], ["secure", "Secured", p.securing]];
-    return `<div class="card-lite"><div class="section-title"><span>How it's carried</span><span class="tag">${esc(c.mode || "")} · ${esc(c.carrier || "")}</span></div>
+    return `<div class="card-lite"><div class="section-title"><span>How it's carried</span><span class="tag">${esc(c.mode || "")}</span></div>
       <ol class="cg-steps">${steps.map(([k, t, d], i) => `<li style="animation-delay:${0.1 + i * 0.08}s"><span class="st-ic">${ic(k)}</span><div><b>${t}</b><p>${esc(d)}</p></div></li>`).join("")}</ol></div>`;
   }
   function cargoHandling(p) {
@@ -814,7 +831,7 @@
         <span class="sn-st ${s.status}">${lab}</span></div>`;
     }).join("");
     const worst = p.sensors.some((s) => s.status === "breach") ? "breach" : p.sensors.some((s) => s.status === "watch") ? "watch" : "ok";
-    return `<div class="card-lite"><div class="section-title"><span>Condition monitor</span><span class="sn-live ${live ? "on" : ""}"><span class="jd-dot"></span>${live ? "Live · last reading 12 min ago" : "Pre-shipment reading at origin · sensors armed"}</span></div>
+    return `<div class="card-lite"><div class="section-title"><span>Condition monitor</span><span class="sn-live ${live ? "on" : ""}"><span class="jd-dot"></span>${live ? "In transit" : "Pre-shipment reading at origin"}</span></div>${p.sensor_note ? `<div class="muted small" style="margin:-4px 0 8px">${esc(p.sensor_note)}</div>` : ""}
       <div class="sn-sum ${worst}">${worst === "ok" ? "All readings inside safe limits." : worst === "watch" ? "One or more readings are close to a limit. Keep an eye on it." : "A reading is outside its safe limit. Act now."}</div>${rows}</div>`;
   }
   function cargoDocs(p) {
@@ -833,20 +850,19 @@
   // ---------- what-if ----------
   // ---------- what-if (one page: CSV on top, a compact single check below) ----------
   const WI_FIELDS = [
-    ["cargo", "Consignment / cargo", "text", { placeholder: "e.g. Lithium battery cells" }],
-    ["origin_port", "From", "text", {}], ["destination_port", "To", "text", {}],
-    ["mode", "Mode", "select", opt(MODES)], ["lead_time_days", "Lead time (days)", "number", { min: 1, max: 365 }],
-    ["reliability_score", "Carrier on-time rate (0–1)", "number", { min: 0, max: 1, step: "any" }],
-    ["geopolitical_risk_index", "Geopolitical index (0–100)", "number", { min: 0, max: 100, step: "any" }],
-    ["weather_risk_level", "Weather risk", "select", ["low:Low", "medium:Medium", "high:High"]],
-    ["cargo_value", "Cargo value (USD)", "number", { min: 0, step: "any" }],
+    ["product_category", "Category", "select", opt(CATEGORIES)],
+    ["origin_port", "From", "select", opt(PORT_LIST)], ["destination_port", "To", "select", opt(PORT_LIST)],
+    ["mode", "Mode", "select", opt(MODES)], ["weight_t", "Weight (tonnes)", "number", { min: 0, step: "any" }],
+    ["reliability_score", "Carrier reliability (0–1)", "number", { min: 0, max: 1, step: "any" }],
+    ["geopolitical_risk_index", "Geopolitical risk (0–100)", "number", { min: 0, max: 100, step: "any" }],
+    ["weather_condition", "Weather", "select", opt(WEATHER_LIST)],
+    ["fuel_price_index", "Fuel price index (1.2–4.5)", "number", { min: 0, max: 10, step: "any" }],
   ];
-  const WI_DEFAULTS = { cargo: "Lithium battery cells", origin_port: "Shenzhen", destination_port: "Felixstowe", mode: "Sea", lead_time_days: 45, reliability_score: 0.84, geopolitical_risk_index: 48, weather_risk_level: "medium", cargo_value: 1900000 };
+  const WI_DEFAULTS = { product_category: "Electronics", origin_port: "Shanghai", destination_port: "Rotterdam", mode: "Sea", weight_t: 180, reliability_score: 0.78, geopolitical_risk_index: 55, weather_condition: "Storm", fuel_price_index: 3.1 };
   function wiRecord(form) {
     const o = formToRecord(form);
-    // Cargo value is entered as one figure; store it as 1,000 units so it stays inside the per-unit limit.
-    if (o.cargo_value != null) { o.units = 1000; o.average_cost_per_unit = +o.cargo_value / 1000; delete o.cargo_value; }
-    if (!o.supplier_name) o.supplier_name = o.cargo || "Planned consignment";
+    o.consignment_id = "What-if";
+    o.cargo = o.product_category ? `${o.product_category} shipment` : "Planned shipment";
     return o;
   }
   function wiResultHTML(r, label) {
@@ -857,9 +873,9 @@
     return `<div class="wr">
       <div class="wr-top">${label ? `<span class="eyebrow">${esc(label)}</span>` : ""}</div>
       <div class="wr-head">
-        <div class="sh-dial wr-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b>${r.risk_score.toFixed(1)}</b><span>7-day risk</span></div></div>
+        <div class="sh-dial wr-dial" style="--c:${c};--target:${r.risk_score}"><div class="sh-dial-in"><b>${r.risk_score.toFixed(1)}</b><span>Disruption risk</span></div></div>
         <div class="wr-kpis"><div class="wr-band">${chip(r.risk_band)}<span>${bandText}</span></div>
-          <div class="wr-nums"><div><span>Expected loss (7 days)</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div><div><span>Cargo value</span><b>${fmtUSD(r.cargo_value_usd)}</b></div></div></div>
+          <div class="wr-nums"><div><span>Expected loss</span><b class="bad">${fmtUSD(r.expected_loss_usd)}</b></div><div><span>Cargo value</span><b>${fmtUSD(r.cargo_value_usd)}</b></div></div></div>
       </div>
       <div class="wr-sec">What drives the risk</div>
       ${drivers.length ? drivers.map((f) => `<div class="wr-drv"><span>${esc(f.label)}</span><i><em style="--w:${(f.contribution / maxC) * 100}%"></em></i><b>${f.value.toFixed(2)}</b></div>`).join("") : `<div class="muted small">No parameter is pushing the risk up.</div>`}
@@ -898,6 +914,7 @@
       const s = r.summary;
       let html = `<div class="csv-bar"><span class="csv-file">${esc(r.filename)}</span><span>Scored <b>${r.rows_scored}</b> of ${r.rows_total}</span>`;
       if (s) html += `<span>${chip("high")} ${s.bands.high}</span><span>${chip("elevated")} ${s.bands.elevated}</span><span>${chip("low")} ${s.bands.low}</span><span class="muted">Expected loss ${fmtUSD(s.expected_loss_usd)}</span>`;
+      if (r.outcome) html += `<span class="csv-outcome" title="The file includes Disruption_Occurred, so predictions are checked against what happened">Matched the actual outcome on <b>${Math.round(r.outcome.agreement * 100)}%</b> of rows${r.outcome.caught != null ? ` · caught ${Math.round(r.outcome.caught * 100)}% of ${r.outcome.disrupted.toLocaleString()} disruptions` : ""}</span>`;
       if (rowErrs.length) html += `<span class="csv-warn" title="${esc(rowErrs.map((e) => `Line ${e.row}: ${e.message}`).join("\n"))}">⚠ ${rowErrs.length} row problem${rowErrs.length > 1 ? "s" : ""}</span>`;
       html += `<span class="csv-btns">${r.results.length ? `<button class="btn btn-secondary btn-sm" id="csv-add">Add to consignments</button><button class="btn btn-secondary btn-sm" id="csv-download">Download results</button>` : ""}<button class="btn btn-ghost btn-sm" id="csv-clear">Clear</button></span></div>`;
       html += `<div class="csv-list">`;

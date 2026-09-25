@@ -1,5 +1,5 @@
 """RiskLens client portal API. Serves the single-page portal and JSON endpoints
-for one client's consignment book."""
+for one client's consignment book, built on the Kaggle datasets in risklens/datasets.py."""
 from __future__ import annotations
 
 import io
@@ -11,16 +11,17 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from risklens import store
-from risklens.geo import geo_payload
+from risklens import datasets, notify, store
 from risklens.cargo import profile as cargo_profile
-from risklens import notify
-from risklens.config import COMPANY, DATA_PROCESSED, DATA_RAW, FEATURE_KEYS, FEATURES, HORIZON_DAYS, RISK_BANDS
+from risklens.config import AS_OF, CATEGORIES, COMPANY, FEATURE_KEYS, FEATURES, MODES, RISK_BANDS, WEATHER_CONDITIONS
+from risklens.features import frame_to_features
+from risklens.geo import PORTS, geo_payload
 from risklens.predictor import apply_changes, load_model, portfolio_summary, predict_proba, score_records
+from risklens.rules import estimate_disruption_cost
 from risklens.validation import OPTIONAL, REQUIRED, validate_dataframe, validate_record
 
 STATIC = Path(__file__).parent / "static"
-app = FastAPI(title="RiskLens API", version="2.0.0")
+app = FastAPI(title="RiskLens API", version="3.0.0")
 
 
 @app.middleware("http")
@@ -36,28 +37,26 @@ async def no_cache_static(request, call_next):
 # ---------------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def lane_history() -> dict:
-    """Score each lane's daily history with the trained model: predicted
-    7-day risk alongside the disruptions that actually happened."""
-    model, _ = load_model()
-    feats = pd.read_csv(DATA_PROCESSED / "supply_chain_features.csv")
-    feats["pred"] = predict_proba(model, feats) * 100
-    per_lane = {
-        sid: g[["date", "pred", "disrupted"]].round(1).to_dict("records")
-        for sid, g in feats.groupby("supplier_id")
-    }
-    dis = pd.read_csv(DATA_RAW / "disruptions.csv")
-    lookup = feats.set_index(["supplier_id", "date"])["pred"]
-    caught = []
-    for _, d in dis.iterrows():
-        prior = [lookup.get((d.supplier_id, (pd.Timestamp(d.date) - pd.Timedelta(days=k)).date().isoformat())) for k in range(1, HORIZON_DAYS + 1)]
-        prior = [p for p in prior if p is not None and not pd.isna(p)]
-        caught.append(bool(prior) and max(prior) >= RISK_BANDS[1][1])
-    dis["flagged_in_advance"] = caught
-    return {"per_lane": per_lane, "disruptions": dis}
+    """Every shipment up to the as-of date, scored by the model, grouped by lane."""
+    model, meta = load_model()
+    h = datasets.history().copy()
+    h["pred"] = (predict_proba(model, frame_to_features(h)) * 100).round(1)
+    h["lane"] = h.origin_port + " → " + h.destination_port
+    per_lane = {lane: g[["date", "shipment_id", "pred", "disrupted"]].to_dict("records") for lane, g in h.groupby("lane")}
+    test_from = meta["test_window"][0]
+    return {"per_lane": per_lane, "shipments": h, "test_from": test_from}
+
+
+def lane_key(r: dict) -> str:
+    return f"{r.get('origin_port')} → {r.get('destination_port')}"
 
 
 def book() -> list[dict]:
-    return sorted(score_records(store.list_consignments(), store.load_alternatives()), key=lambda r: -r["risk_score"])
+    results = score_records(store.list_consignments(), store.load_alternatives())
+    per_lane = lane_history()["per_lane"]
+    for r in results:
+        r["trend"] = [p["pred"] for p in per_lane.get(lane_key(r), [])[-30:]]
+    return sorted(results, key=lambda r: -r["risk_score"])
 
 
 def lane_label(r: dict) -> str:
@@ -71,25 +70,44 @@ def lane_label(r: dict) -> str:
 def meta():
     _, m = load_model()
     return {
-        "company": COMPANY, "horizon_days": HORIZON_DAYS, "features": FEATURES,
+        "company": COMPANY, "as_of": AS_OF.isoformat(), "features": FEATURES,
         "risk_bands": [{"band": b, "min": lo, "max": hi} for b, lo, hi in RISK_BANDS],
         "csv": {"required": REQUIRED, "optional": OPTIONAL},
-        "model": {"auc_roc": m["metrics"]["auc_roc"], "trained_at": m["trained_at"]},
+        "options": {"ports": sorted(PORTS), "modes": MODES, "categories": CATEGORIES, "weather": list(WEATHER_CONDITIONS)},
+        "model": {k: m["metrics"][k] for k in ("auc_roc", "avg_precision", "recall", "precision", "base_rate_test")}
+                 | {"trained_at": m["trained_at"], "n_train": m["n_train"], "n_test": m["n_test"], "test_window": m["test_window"],
+                    "importance": m["importance"]},
+        "sources": datasets.sources(),
     }
+
+
+def _cause(s) -> str:
+    parts = [s.weather_condition] if s.weather_condition != "Clear" else []
+    if s.geopolitical_risk_index >= 60:
+        parts.append(f"geopolitical risk {s.geopolitical_risk_index / 10:.1f}")
+    if s.reliability_score < 0.65:
+        parts.append(f"carrier reliability {s.reliability_score:.2f}")
+    text = " · ".join(parts) or "no single stand-out signal"
+    return text[0].upper() + text[1:]
 
 
 @app.get("/api/overview")
 def overview():
     results = book()
     hist = lane_history()
-    lanes = {r["supplier_id"]: r for r in results if r.get("supplier_id")}
-    for r in results:
-        h = hist["per_lane"].get(r.get("supplier_id"), [])
-        r["trend"] = [p["pred"] for p in h[-30:]]
-    dis = hist["disruptions"]
-    dis = dis[dis.supplier_id.isin(lanes)].copy()
-    dis["lane"] = dis.supplier_id.map(lambda s: lane_label(lanes[s]))
-    dis["consignment_id"] = dis.supplier_id.map(lambda s: lanes[s]["consignment_id"])
+    lanes = {lane_key(r): r for r in results}
+    ships = hist["shipments"]
+    elevated = RISK_BANDS[1][1]
+    test = ships[ships.date >= hist["test_from"]]
+    dis = test[(test.disrupted == 1) & test.lane.isin(lanes)].sort_values("date", ascending=False).head(8)
+    recent = []
+    for s in dis.itertuples():
+        units, unit_value = datasets.estimate_value(s.product_category, s.weight_t)
+        recent.append({"date": s.date, "lane": s.lane, "consignment_id": lanes[s.lane]["consignment_id"], "shipment_id": s.shipment_id,
+                       "mode": s.mode, "disruption_reason": _cause(s), "risk_score": float(s.pred),
+                       "recovery_cost_usd": estimate_disruption_cost(units * unit_value, s.mode),
+                       "flagged_in_advance": bool(s.pred >= elevated)})
+    caught = test[test.disrupted == 1]
     actions = []
     sent = notify.latest_by_action()
     for r in results:
@@ -102,11 +120,11 @@ def overview():
     actions.sort(key=lambda a: -a["net_benefit_usd"])
     return {
         "summary": portfolio_summary(results), "consignments": results,
-        "recent_disruptions": dis.sort_values("date", ascending=False).head(8).to_dict("records"),
-        "catch_rate": round(float(dis.flagged_in_advance.mean() * 100), 1) if len(dis) else None,
-        "lane_disruptions": int(len(dis)),
-        "reasons": dis.disruption_reason.value_counts().to_dict(), "top_actions": actions[:6],
-        "n_actions": len(actions), "geo": geo_payload(results),
+        "recent_disruptions": recent,
+        "catch_rate": round(float((caught.pred >= elevated).mean() * 100), 1) if len(caught) else None,
+        "catch_window": [hist["test_from"], AS_OF.isoformat()], "catch_n": int(len(caught)),
+        "lane_disruptions": int(len(dis)), "top_actions": actions[:6], "n_actions": len(actions),
+        "geo": geo_payload(results), "gpr_global": datasets.gpr_global(), "sources": datasets.sources(),
     }
 
 
@@ -124,7 +142,7 @@ def consignment(cid: str):
     if not rec:
         raise HTTPException(404, "Consignment not found")
     result = score_records([rec], store.load_alternatives())[0]
-    result["history"] = lane_history()["per_lane"].get(rec.get("supplier_id"), [])
+    result["history"] = lane_history()["per_lane"].get(lane_key(rec), [])
     result["record"] = rec
     return result
 
@@ -276,7 +294,18 @@ async def score_csv(file: UploadFile = File(...)):
         raise HTTPException(400, f"Could not parse CSV: {e}") from e
     v = validate_dataframe(df)
     results = score_records(v["records"], store.load_alternatives()) if v["records"] else []
-    return {
+    outcome = None
+    actual = [(r["risk_score"], rec["_actual"]) for r, rec in zip(results, v["records"]) if "_actual" in rec]
+    if actual:
+        threshold = load_model()[1]["metrics"]["decision_threshold"] * 100
+        hits = sum(1 for sc, a in actual if (sc >= threshold) == bool(a))
+        dis = [sc for sc, a in actual if a]
+        outcome = {"rows": len(actual), "agreement": round(hits / len(actual), 3),
+                   "caught": round(sum(1 for sc in dis if sc >= RISK_BANDS[1][1]) / len(dis), 3) if dis else None,
+                   "disrupted": len(dis)}
+    for rec in v["records"]:
+        rec.pop("_actual", None)
+    return {"outcome": outcome,
         "filename": file.filename, "rows_total": int(len(df)), "rows_scored": len(results),
         "errors": v["errors"], "warnings": v["warnings"], "columns": v["columns"],
         "results": sorted(results, key=lambda r: -r["risk_score"]),
@@ -286,19 +315,17 @@ async def score_csv(file: UploadFile = File(...)):
 
 @app.get("/api/template.csv")
 def template():
-    csv = (
-        "consignment_id,cargo,supplier_name,product_category,mode,carrier,origin_port,origin_country,region,"
-        "destination_port,destination_country,destination_region,dispatch_date,eta_date,units,average_cost_per_unit,"
-        "lead_time_days,lead_time_std_days,reliability_score,geopolitical_risk_index,port_congestion_index,"
-        "weather_risk_level,price_swing_pct,days_since_last_disruption,single_source\n"
-        "CN-26-1001,Laptop batteries,Shenzhen Boards,Electronics,Sea,Pacific Arc Lines,Shenzhen,China,East Asia,"
-        "Hamburg,Germany,Europe,2026-10-06,2026-11-10,12000,85,38,6,0.91,42,55,medium,6.5,40,0\n"
-        "CN-26-1002,Cotton yarn,Karachi Cotton,Raw Materials,Sea,Gulfstar Lines,Karachi,Pakistan,South Asia,"
-        "Mombasa,Kenya,Africa,2026-10-03,2026-10-24,40000,6.5,39,11,0.70,62,48,high,14.2,9,1\n"
-        "CN-26-1003,Auto brake assemblies,Pune Autoparts,Machinery,Road,Interstate Haulage Co.,Pune,India,South Asia,"
-        "Chennai,India,South Asia,2026-09-30,2026-10-03,2500,140,6,1,0.95,30,25,low,3.1,,0\n"
-    )
-    return PlainTextResponse(csv, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=risklens_consignments_template.csv"})
+    """Five real test-window shipments in the Kaggle file's own layout, so the template doubles as a sample."""
+    h = datasets.load()["shipments"]
+    rows = h[h.date >= lane_history()["test_from"]].iloc[[3, 120, 480, 800, 1150]]
+    out = pd.DataFrame({
+        "Shipment_ID": rows.shipment_id, "Date": rows.date, "Origin_Port": rows.origin_port, "Destination_Port": rows.destination_port,
+        "Transport_Mode": rows["mode"], "Product_Category": rows.product_category, "Distance_km": rows.distance_km,
+        "Weight_MT": rows.weight_t, "Fuel_Price_Index": rows.fuel_price_index,
+        "Geopolitical_Risk_Score": (rows.geopolitical_risk_index / 10).round(1), "Weather_Condition": rows.weather_condition,
+        "Carrier_Reliability_Score": rows.reliability_score,
+    }).to_csv(index=False)
+    return PlainTextResponse(out, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=risklens_shipments_template.csv"})
 
 
 @app.get("/api/export.csv")
@@ -310,7 +337,7 @@ def export_csv():
         rows.append({
             "consignment_id": r["consignment_id"], "cargo": r["cargo"], "shipper": r["supplier_name"],
             "from": f"{r['origin_port']}, {r['origin_country']}", "to": f"{r['destination_port']}, {r['destination_country']}",
-            "mode": r["mode"], "carrier": r["carrier"], "dispatch_date": j.get("dispatch_date"), "eta_date": j.get("eta_date"),
+            "mode": r["mode"], "dispatch_date": j.get("dispatch_date"), "eta_date": j.get("eta_date"),
             "status": j.get("status"), "cargo_value_usd": r["cargo_value_usd"],
             "risk_score": r["risk_score"], "risk_band": r["risk_band"], "expected_loss_usd": r["expected_loss_usd"],
             **{f"factor_{f['key']}": f["value"] for f in r["factors"]},

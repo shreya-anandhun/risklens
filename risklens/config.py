@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_RAW = ROOT / "data" / "raw"
-DATA_PROCESSED = ROOT / "data" / "processed"
+DATA_KAGGLE = ROOT / "data" / "kaggle"          # raw Kaggle downloads (git-ignored, see tools/fetch_datasets.sh)
+DATA_PROCESSED = ROOT / "data" / "processed"    # compact files built from them, used at runtime
 # Serverless hosts (Vercel) only allow writes under /tmp.
 DATA_PORTAL = Path("/tmp/risklens/portal") if os.environ.get("VERCEL") else ROOT / "data" / "portal"
 MODELS = ROOT / "models"
@@ -14,11 +15,11 @@ MODELS = ROOT / "models"
 MODEL_PATH = MODELS / "risk_model.json"
 META_PATH = MODELS / "model_meta.json"
 
-# Prediction horizon: the model predicts whether a disruption occurs within
-# this many days. This is the "lead time" the system gives planners.
-HORIZON_DAYS = 7
+# The shipment data runs to 31 Dec 2025. The portal shows the book as it stood on this date:
+# shipments dispatched before it are in transit, later ones are scheduled.
+AS_OF = date(2025, 12, 20)
 
-# The client this portal is deployed for. All data is dummy data.
+# The client this portal is deployed for.
 COMPANY = {
     "name": "Northwind Logistics",
     "short": "NW",
@@ -26,82 +27,77 @@ COMPANY = {
     "currency": "USD",
 }
 
-# Reference ranges used to normalise raw inputs to a 0-1 risk scale.
-LEAD_TIME_MIN, LEAD_TIME_MAX = 10, 90          # days
-LEAD_TIME_CV_CAP = 0.50                        # std/mean above this = max risk
-PRICE_SWING_CAP = 25.0                         # 30-day % swing above this = max risk
-RECENCY_HALF_LIFE = 30.0                       # days; recency risk decays with e^(-d/30)
-NO_HISTORY_DAYS = 999                          # sentinel when no disruption on record
+MODES = ["Sea", "Air", "Road", "Rail"]
+CATEGORIES = ["Electronics", "Textiles", "Perishables", "Pharmaceuticals", "Automotive"]
 
-WEATHER_LEVELS = {"low": 0.15, "medium": 0.5, "high": 0.9}
-REGIONS = ["South Asia", "Southeast Asia", "East Asia", "Middle East", "Europe", "Africa", "North America", "Latin America"]
-CATEGORIES = ["Electronics", "Raw Materials", "Machinery", "Chemicals", "Packaging"]
+# Weather conditions in the shipment data, and the 0-100 severity each maps to.
+WEATHER_CONDITIONS = {"Clear": 10, "Rain": 35, "Fog": 45, "Storm": 75, "Hurricane": 95}
+WEATHER_LEVELS = {"low": 15, "medium": 45, "high": 85}   # for records that only give a level
 
-# Risk banding on the model's disruption probability (0-100).
+# Reference ranges used to normalise raw inputs to a 0-1 risk scale (the ranges in the dataset).
+FUEL_MIN, FUEL_MAX = 1.2, 4.5
+DISTANCE_MAX_KM = 15_000
+
+# Cargo value is not in the shipment data, so it is estimated from weight with a typical
+# value density per category (USD per kg), and packed into units of a typical size.
+CATEGORY_SPECS = {
+    "Electronics": {"usd_per_kg": 60.0, "kg_per_unit": 0.8},
+    "Textiles": {"usd_per_kg": 12.0, "kg_per_unit": 0.4},
+    "Perishables": {"usd_per_kg": 3.5, "kg_per_unit": 10.0},
+    "Pharmaceuticals": {"usd_per_kg": 40.0, "kg_per_unit": 0.25},
+    "Automotive": {"usd_per_kg": 10.0, "kg_per_unit": 6.0},
+}
+
+# Risk banding on the model's disruption probability (0-100). The shipment data has a 61% base
+# rate, so the bands sit higher than they would for rarer events.
 RISK_BANDS = [
-    ("low", 0, 12),
-    ("elevated", 12, 30),
-    ("high", 30, 101),
+    ("low", 0, 40),
+    ("elevated", 40, 70),
+    ("high", 70, 101),
 ]
 
 # Ordered model feature set. Every feature is a 0-1 risk factor (1 = riskiest),
 # so the parameter scorecard in the portal reads consistently.
 FEATURES = [
     {
-        "key": "reliability_risk",
-        "label": "Supplier reliability",
-        "source": "on_time_deliveries / total_deliveries",
-        "formula": "1 - reliability_score",
-        "explain": "Share of late or failed deliveries. A supplier that delivers on time 90% of the time scores 0.10.",
-        "weight": 0.20,
-    },
-    {
-        "key": "lead_time_risk",
-        "label": "Lead time exposure",
-        "source": "lead_time_days",
-        "formula": "(lead_time_days - 10) / (90 - 10), clipped to 0-1",
-        "explain": "Longer lead times mean a longer recovery window once something goes wrong.",
-        "weight": 0.10,
-    },
-    {
-        "key": "lead_time_variability",
-        "label": "Lead time variability",
-        "source": "lead_time_std_days / lead_time_days",
-        "formula": "min(1, coefficient_of_variation / 0.50)",
-        "explain": "How inconsistent deliveries are. A supplier whose lead time swings by half its average scores 1.0.",
-        "weight": 0.10,
+        "key": "weather_risk",
+        "label": "Weather conditions",
+        "source": "Weather_Condition",
+        "formula": "severity / 100: Clear 10, Rain 35, Fog 45, Storm 75, Hurricane 95",
+        "explain": "Weather on the route. Every hurricane shipment in the data was disrupted, and three in four storm shipments.",
+        "weight": 0.35,
     },
     {
         "key": "geopolitical_risk",
         "label": "Geopolitical risk",
-        "source": "geopolitical_risk_index, port_congestion_index",
-        "formula": "0.7 × geopolitical_index/100 + 0.3 × port_congestion_index/100",
-        "explain": "Country and trade-route instability, blended with logistics congestion in the region.",
-        "weight": 0.18,
+        "source": "Geopolitical_Risk_Score (0-10)",
+        "formula": "score / 10",
+        "explain": "Instability along the route and at the ports. Disruption rises steadily with this score in every weather condition.",
+        "weight": 0.30,
     },
     {
-        "key": "weather_risk",
-        "label": "Weather & climate risk",
-        "source": "weather_risk_index or weather_risk_level",
-        "formula": "weather_risk_index / 100 (or low=0.15, medium=0.50, high=0.90)",
-        "explain": "Severe weather likelihood at the supplier's site and shipping lanes.",
-        "weight": 0.14,
+        "key": "reliability_risk",
+        "label": "Carrier reliability",
+        "source": "Carrier_Reliability_Score (0-1)",
+        "formula": "1 - reliability score",
+        "explain": "How often this carrier delivers as planned. A carrier with a 0.90 score rates 0.10.",
+        "weight": 0.15,
     },
     {
-        "key": "price_volatility",
-        "label": "Commodity price volatility",
-        "source": "commodity_price_index (30-day window)",
-        "formula": "min(1, 30-day % swing / 25)",
-        "explain": "Input-cost instability. Sharp price moves precede supplier renegotiation, allocation and default.",
-        "weight": 0.12,
+        "key": "fuel_price_risk",
+        "label": "Fuel price",
+        "source": "Fuel_Price_Index (1.2-4.5)",
+        "formula": "(index - 1.2) / (4.5 - 1.2)",
+        "explain": "Fuel cost pressure at the time of shipping, which drives surcharges and rolled bookings.",
+        "weight": 0.10,
     },
     {
-        "key": "disruption_recency",
-        "label": "Disruption recency",
-        "source": "days_since_last_disruption",
-        "formula": "exp(-days_since_last_disruption / 30)",
-        "explain": "How fresh the last failure is. Yesterday's disruption scores ~0.97; one 90 days ago scores ~0.05.",
-        "weight": 0.16,
+        "key": "distance_risk",
+        "label": "Route distance",
+        "source": "Distance_km",
+        "formula": "distance / 15,000 km",
+        "explain": "Longer routes spend more time exposed to weather and chokepoints.",
+        "weight": 0.10,
     },
 ]
 FEATURE_KEYS = [f["key"] for f in FEATURES]

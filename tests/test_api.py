@@ -1,8 +1,10 @@
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from risklens import store
+from risklens import datasets, store
+from risklens.book import BOOK_PATH
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -19,103 +21,123 @@ def client():
     return TestClient(app)
 
 
-GOOD = {"consignment_id": "T-1", "cargo": "Test cargo", "origin_port": "Chennai", "destination_port": "Dubai",
-        "lead_time_days": 40, "reliability_score": 0.85, "geopolitical_risk_index": 30, "weather_risk_level": "medium",
-        "units": 1000, "average_cost_per_unit": 50}
+GOOD = {"consignment_id": "T-1", "cargo": "Test cargo", "product_category": "Electronics", "mode": "Sea",
+        "origin_port": "Shanghai", "destination_port": "Rotterdam", "weight_t": 120, "reliability_score": 0.85,
+        "geopolitical_risk_index": 30, "weather_condition": "Rain", "fuel_price_index": 2.5, "distance_km": 18000}
 
 
-def test_overview_is_scoped_to_one_company(client):
+def test_book_is_real_dataset_shipments(client):
     o = client.get("/api/overview").json()
-    s = o["summary"]
-    assert s["n"] == 7 and s["in_transit"] + s["scheduled"] <= 7
-    assert {r["consignment_id"] for r in o["consignments"]} == {f"CN-26-09{n}" for n in (11, 14, 17, 20, 22, 25, 28)}
+    book = pd.read_csv(BOOK_PATH)
+    ships = datasets.load()["shipments"].set_index("shipment_id")
+    assert o["summary"]["n"] == len(book) >= 8
     for r in o["consignments"]:
-        assert r["origin_port"] and r["destination_port"] and r["journey"] and len(r["trend"]) == 30
+        src = ships.loc[r["consignment_id"]]            # every consignment is a row in the Kaggle data
+        assert r["origin_port"] == src.origin_port and r["mode"] == src["mode"]
+        assert r["inputs"]["reliability_score"] == pytest.approx(src.reliability_score)
+        assert r["journey"]["status"] in ("In transit", "Scheduled") and r["trend"]
+    assert {r["risk_band"] for r in o["consignments"]} == {"low", "elevated", "high"}
     lanes = {f'{r["origin_port"]} → {r["destination_port"]}' for r in o["consignments"]}
-    assert all(d["lane"] in lanes for d in o["recent_disruptions"])
+    assert o["recent_disruptions"] and all(d["lane"] in lanes for d in o["recent_disruptions"])
+    assert 0 < o["catch_rate"] <= 100 and len(o["sources"]) == 4
     m = client.get("/api/meta").json()
-    assert m["company"]["name"] and len(m["features"]) == 7
+    assert m["model"]["auc_roc"] > 0.7 and len(m["features"]) == 5 and m["as_of"] == "2025-12-20"
 
 
 def test_score_shape_alternatives_and_monotonicity(client):
-    r = client.post("/api/score", json=GOOD).json()
+    r = client.post("/api/score", json={**GOOD, "weather_condition": "Storm", "geopolitical_risk_index": 70}).json()
     assert 0 <= r["risk_score"] <= 100 and r["risk_band"] in ("low", "elevated", "high")
-    assert len(r["factors"]) == 7 and r["recommendations"] and r["alternatives"]
+    assert len(r["factors"]) == 5 and r["recommendations"] and r["alternatives"] and r["context"]["lane"]["shipments"] > 0
     for a in r["alternatives"]:
         assert a["net_benefit_usd"] == a["loss_avoided_usd"] - a["cost_usd"]
-    worse = client.post("/api/score", json={**GOOD, "geopolitical_risk_index": 95, "weather_risk_level": "high", "reliability_score": 0.55}).json()
-    assert worse["risk_score"] >= r["risk_score"]
+    calm = client.post("/api/score", json=GOOD).json()
+    worse = client.post("/api/score", json={**GOOD, "geopolitical_risk_index": 95, "weather_condition": "Hurricane", "reliability_score": 0.55}).json()
+    assert worse["risk_score"] >= calm["risk_score"]
 
 
-def test_curated_alternatives_and_apply(client):
-    d = client.get("/api/consignments/CN-26-0917").json()
-    assert [a["id"] for a in d["alternatives"]] and d["history"]
+def test_alternatives_are_rescored_and_apply(client):
+    o = client.get("/api/overview").json()
+    cid = next(r["consignment_id"] for r in o["consignments"] if r.get("best_alternative"))
+    d = client.get(f"/api/consignments/{cid}").json()
     best = d["best_alternative"]
-    assert best and best["risk_score"] < d["risk_score"]
-    applied = client.post(f"/api/consignments/CN-26-0917/apply/{best['id']}").json()
+    assert best["risk_score"] < d["risk_score"] and d["history"]
+    applied = client.post(f"/api/consignments/{cid}/apply/{best['id']}").json()
     assert applied["risk_score"] == pytest.approx(best["risk_score"], abs=0.2)
     assert applied["applied_alternative"] == best["id"]
     assert best["id"] not in [a["id"] for a in applied["alternatives"]]
-    assert client.post("/api/consignments/CN-26-0917/apply/NOPE").status_code == 404
+    assert client.post(f"/api/consignments/{cid}/apply/NOPE").status_code == 404
 
 
-def test_score_accepts_percent_reliability(client):
+def test_score_accepts_percent_reliability_and_kaggle_geo_score(client):
     a = client.post("/api/score", json={**GOOD, "reliability_score": 85}).json()
     b = client.post("/api/score", json=GOOD).json()
-    assert a["risk_score"] == b["risk_score"]
+    c = client.post("/api/score", json={**{k: v for k, v in GOOD.items() if k != "geopolitical_risk_index"}, "Geopolitical_Risk_Score": 3}).json()
+    assert a["risk_score"] == b["risk_score"] == c["risk_score"]
 
 
 def test_score_rejects_bad_input_with_field_errors(client):
-    r = client.post("/api/score", json={**GOOD, "lead_time_days": "soon", "weather_risk_level": "stormy", "reliability_score": 170, "eta_date": "next week"})
+    r = client.post("/api/score", json={**GOOD, "weight_t": "heavy", "weather_condition": "snowy", "reliability_score": 170, "eta_date": "next week"})
     assert r.status_code == 422
     fields = {e["field"] for e in r.json()["detail"]["errors"]}
-    assert fields == {"lead_time_days", "weather_risk_level", "reliability_score", "eta_date"}
-    r = client.post("/api/score", json={**GOOD, "dispatch_date": "2026-10-10", "eta_date": "2026-10-01"})
+    assert fields == {"weight_t", "weather_condition", "reliability_score", "eta_date"}
+    r = client.post("/api/score", json={**GOOD, "dispatch_date": "2025-12-10", "eta_date": "2025-12-01"})
     assert r.status_code == 422 and r.json()["detail"]["errors"][0]["field"] == "eta_date"
 
 
 def test_consignment_crud_roundtrip(client):
+    n = len(client.get("/api/consignments").json())
     no_id = {k: v for k, v in GOOD.items() if k != "consignment_id"}
     created = client.post("/api/consignments", json=no_id)
     assert created.status_code == 201
     cid = created.json()["consignment_id"]
     assert cid.startswith("CN-") and cid != "T-1"  # server assigns the ID
-    assert len(client.get("/api/consignments").json()) == 8
-    upd = client.put(f"/api/consignments/{cid}", json={**GOOD, "geopolitical_risk_index": 99, "weather_risk_level": "high"}).json()
+    assert len(client.get("/api/consignments").json()) == n + 1
+    upd = client.put(f"/api/consignments/{cid}", json={**GOOD, "geopolitical_risk_index": 99, "weather_condition": "Hurricane"}).json()
     assert upd["risk_score"] >= created.json()["risk_score"]
     detail = client.get(f"/api/consignments/{cid}").json()
-    assert detail["record"]["geopolitical_risk_index"] == 99 and detail["history"] == []
+    assert detail["record"]["geopolitical_risk_index"] == 99 and detail["history"]
     assert client.delete(f"/api/consignments/{cid}").status_code == 200
     assert client.delete(f"/api/consignments/{cid}").status_code == 404
     assert client.put("/api/consignments/NOPE", json=GOOD).status_code == 404
 
 
 def test_csv_upload_partial_validity(client):
-    csv = ("Shipment ID,From,To,Lead Time (days),Reliability,Geopolitical Risk,Weather,extra\n"
-           "A-1,Chennai,Dubai,30,0.9,20,low,x\n"
-           "A-2,Chennai,Dubai,abc,0.9,20,low,x\n"
-           "A-3,Chennai,Dubai,30,0.9,20,foggy,x\n"
-           ",Chennai,Dubai,30,0.9,20,low,x\n")
+    csv = ("Shipment ID,From,To,Carrier Reliability,Geopolitical Risk,Weather,extra\n"
+           "A-1,Shanghai,Busan,0.9,20,Clear,x\n"
+           "A-2,Shanghai,Busan,abc,20,Clear,x\n"
+           "A-3,Shanghai,Busan,0.9,20,Snow,x\n"
+           ",Shanghai,Busan,0.9,20,Clear,x\n")
     r = client.post("/api/score/csv", files={"file": ("s.csv", csv.encode(), "text/csv")}).json()
     assert r["rows_total"] == 4 and r["rows_scored"] == 1
-    assert {(e["row"], e["field"]) for e in r["errors"]} == {(3, "lead_time_days"), (4, "weather_risk_level"), (5, "consignment_id")}
-    assert r["results"][0]["origin_port"] == "Chennai"
+    assert {(e["row"], e["field"]) for e in r["errors"]} == {(3, "reliability_score"), (4, "weather_condition"), (5, "consignment_id")}
+    assert r["results"][0]["origin_port"] == "Shanghai" and r["outcome"] is None
     assert any("extra" in w for w in r["warnings"])
+
+
+def test_kaggle_file_scores_and_checks_against_outcomes(client):
+    path = datasets.RAW["shipments"]
+    if not path.exists():
+        pytest.skip("raw Kaggle file not downloaded")
+    r = client.post("/api/score/csv", files={"file": (path.name, path.read_bytes(), "text/csv")}).json()
+    assert r["rows_scored"] == 5000 and not r["errors"] and not r["warnings"]
+    assert r["outcome"]["rows"] == 5000 and r["outcome"]["agreement"] > 0.65 and r["outcome"]["caught"] > 0.8
 
 
 def test_csv_missing_columns_and_bad_files(client):
     r = client.post("/api/score/csv", files={"file": ("s.csv", b"name,foo\nA,1\n", "text/csv")}).json()
     assert r["rows_scored"] == 0 and "Missing required" in r["errors"][0]["message"]
     assert client.post("/api/score/csv", files={"file": ("s.xlsx", b"zz", "application/octet-stream")}).status_code == 400
-    r = client.post("/api/score/csv", files={"file": ("empty.csv", b"consignment_id,lead_time_days,reliability_score,geopolitical_risk_index,weather_risk_level\n", "text/csv")}).json()
+    r = client.post("/api/score/csv", files={"file": ("empty.csv", b"Shipment_ID,Carrier_Reliability_Score,Geopolitical_Risk_Score,Weather_Condition\n", "text/csv")}).json()
     assert r["rows_scored"] == 0 and "no rows" in r["errors"][0]["message"]
 
 
 def test_template_roundtrips_import_and_export(client):
     t = client.get("/api/template.csv")
+    assert t.text.startswith("Shipment_ID,Date,Origin_Port")
     r = client.post("/api/score/csv", files={"file": ("t.csv", t.content, "text/csv")}).json()
-    assert r["rows_scored"] == 3 and not r["errors"]
-    assert client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"] == 3
+    assert r["rows_scored"] == 5 and not r["errors"]
+    added = client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"]
+    assert added >= 1
     assert client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"] == 0
     e = client.get("/api/export.csv")
     assert e.status_code == 200 and e.text.startswith("consignment_id,") and "recommended_alternative" in e.text.splitlines()[0]
@@ -130,22 +152,30 @@ def test_overview_geo_for_globe(client):
         assert len(g["points"]) >= 2 and g["origin"]["about"] and g["destination"]["about"]
         assert all(-90 <= la <= 90 and -180 <= lo <= 180 for la, lo in g["points"])
     assert geo["hotspots"] and all(set(h["lanes"]) <= ids for h in geo["hotspots"])
+    assert any(h["gpr"] for h in geo["hotspots"])        # real GPR readings on the chokepoints
     # an unknown port is reported instead of drawn
     client.post("/api/consignments", json={**GOOD, "origin_port": "Atlantis"})
     assert len(client.get("/api/overview").json()["geo"]["unmapped"]) == 1
 
 
+def test_sea_routes_pass_the_real_chokepoints():
+    from risklens.geo import NODES, sea_path
+    names = lambda o, d: {k for p in sea_path(o, d) for k, v in NODES.items() if v == p}
+    assert {"malacca", "bab_el_mandeb", "suez"} <= names("Shanghai", "Rotterdam")
+    assert "panama" in names("Los Angeles", "Hamburg") and "hormuz" in names("Singapore", "Dubai")
+
+
 def test_cargo_profile(client):
-    for cid in ("CN-26-0911", "CN-26-0914", "CN-26-0922"):
-        p = client.get(f"/api/consignments/{cid}/cargo").json()["profile"]
+    o = client.get("/api/overview").json()
+    for r in o["consignments"]:
+        p = client.get(f"/api/consignments/{r['consignment_id']}/cargo").json()["profile"]
         L = p["load"]
         assert L["units"] > 0 and L["gross_t"] >= L["net_t"] > 0 and L["equipment_count"] >= 1
         assert 0 < L["fill_weight"] <= 1 and 0 < L["fill_volume"] <= 1
         assert p["handling"] and p["documents"] and all(s["status"] in ("ok", "watch", "breach") for s in p["sensors"])
-    assert client.get("/api/consignments/CN-26-0914/cargo").json()["profile"]["hazard"]["un"] == "UN 2902"
     created = client.post("/api/consignments", json={k: v for k, v in GOOD.items() if k != "consignment_id"}).json()
     g = client.get(f"/api/consignments/{created['consignment_id']}/cargo").json()["profile"]
-    assert g.get("generic") and g["load"]["units"] == 1000
+    assert g["hazard"]["un"] == "UN 3481" and g["load"]["net_t"] == pytest.approx(120)
     assert client.get("/api/consignments/NOPE/cargo").status_code == 404
 
 

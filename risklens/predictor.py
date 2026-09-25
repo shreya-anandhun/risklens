@@ -4,15 +4,16 @@ mitigations and model-scored alternative plans."""
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date
 from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 
-from .config import FEATURES, FEATURE_KEYS, FEATURE_WEIGHTS, META_PATH, MODEL_PATH, RISK_BANDS
-from .features import composite_index, record_to_factors
+from . import datasets
+from .config import AS_OF, FEATURES, FEATURE_KEYS, FEATURE_WEIGHTS, META_PATH, MODEL_PATH, RISK_BANDS, WEATHER_CONDITIONS
+from .features import composite_index, record_to_factors, weather_index, weather_level
 from .rules import estimate_disruption_cost, recommend
 from .validation import NUMERIC_RANGES
 
@@ -36,15 +37,11 @@ def risk_band(score: float) -> str:
 
 
 def cargo_value(rec: dict) -> float:
-    unit = float(rec.get("average_cost_per_unit") or 0)
-    units = rec.get("units")
-    if units is None or units == "":
-        units = rec.get("annual_volume_units") or 0
-    return unit * float(units)
+    return float(rec.get("average_cost_per_unit") or 0) * float(rec.get("units") or 0)
 
 
 def predict_proba(model: xgb.Booster, X: pd.DataFrame) -> np.ndarray:
-    """Probability of disruption within the horizon for each row of X."""
+    """Probability that each shipment in X is disrupted."""
     return model.predict(xgb.DMatrix(X[FEATURE_KEYS]))
 
 
@@ -52,25 +49,24 @@ def _predict(records: list[dict]):
     model, _ = load_model()
     factors = [record_to_factors(r) for r in records]
     X = pd.DataFrame(factors)[FEATURE_KEYS]
-    proba = predict_proba(model, X)
-    return factors, X, proba
+    return factors, X, predict_proba(model, X)
 
 
 # ---------------------------------------------------------------------------
 # Alternatives
 # ---------------------------------------------------------------------------
 LABELS = {
-    "reliability_score": ("Carrier on-time rate", "{:.2f}"), "lead_time_days": ("Lead time", "{:.0f} d"),
-    "lead_time_std_days": ("Lead time spread", "±{:.1f} d"), "geopolitical_risk_index": ("Geopolitical index", "{:.0f}"),
-    "port_congestion_index": ("Port congestion", "{:.0f}"), "weather_risk_index": ("Weather index", "{:.0f}"),
-    "days_since_last_disruption": ("Days since lane disruption", "{:.0f}"), "price_swing_pct": ("Price swing", "{:.1f}%"),
+    "reliability_score": ("Carrier reliability", "{:.2f}"), "lead_time_days": ("Lead time", "{:.0f} d"),
+    "geopolitical_risk_index": ("Geopolitical risk", "{:.0f}"), "weather_risk_index": ("Weather severity", "{:.0f}"),
+    "fuel_price_index": ("Fuel price index", "{:.2f}"), "distance_km": ("Distance", "{:,.0f} km"),
 }
-TEXT_LABELS = {"carrier": "Carrier", "mode": "Mode", "origin_port": "From", "destination_port": "To",
-               "route_via": "Via", "origin_country": "Origin country", "destination_country": "Destination country"}
+TEXT_LABELS = {"mode": "Mode", "origin_port": "From", "destination_port": "To", "route_via": "Via",
+               "weather_condition": "Weather", "origin_country": "Origin country", "destination_country": "Destination country"}
 
 
 def apply_changes(rec: dict, changes: dict) -> tuple[dict, list[str]]:
-    """Apply an alternative's changes to a record. Returns (new_record, human-readable diffs)."""
+    """Apply an alternative's changes to a record. Returns (new_record, human-readable diffs).
+    A number sets the value; "*x" multiplies, "+x"/"-x" adds, "^x" raises to at least x."""
     new = dict(rec)
     diffs = []
     for k, v in changes.items():
@@ -92,28 +88,33 @@ def apply_changes(rec: dict, changes: dict) -> tuple[dict, list[str]]:
             new[k] = v
             if k in TEXT_LABELS and v != old:
                 diffs.append(f"{TEXT_LABELS[k]}: {v}" if not old else f"{TEXT_LABELS[k]}: {old} → {v}")
-    if "weather_risk_index" in changes:
-        w = new["weather_risk_index"]
-        new["weather_risk_level"] = "low" if w < 40 else ("medium" if w < 65 else "high")
+    if "weather_condition" in changes:
+        new["weather_risk_index"] = float(WEATHER_CONDITIONS.get(new["weather_condition"], weather_index(new)))
+    new["weather_risk_level"] = weather_level(weather_index(new))
     return new, diffs
 
 
-def generic_alternatives(rec: dict) -> list[dict]:
-    """Fallback plans for consignments without curated alternatives."""
-    lead = float(rec.get("lead_time_days") or 30)
-    alts = [
-        {"id": "G1", "title": "Switch to a higher-reliability carrier",
-         "description": "Book with a carrier holding a 95% on-time record on this lane.",
-         "changes": {"reliability_score": "^0.95", "lead_time_std_days": "*0.7"}, "cost_delta_pct": 2.5, "eta_delta_days": 0},
-        {"id": "G2", "title": "Reroute through a lower-risk corridor",
-         "description": "Use an alternative port and routing away from the current chokepoint.",
-         "changes": {"geopolitical_risk_index": "*0.65", "port_congestion_index": "*0.7"}, "cost_delta_pct": 2.0, "eta_delta_days": 4},
-    ]
-    if str(rec.get("mode", "")).lower() != "air" and lead > 10:
-        alts.append({"id": "G3", "title": "Upgrade to air freight",
-                     "description": "Move the consignment by air to cut transit time and exposure.",
-                     "changes": {"mode": "Air", "lead_time_days": 7, "lead_time_std_days": 1.5, "weather_risk_index": "*0.7"},
-                     "cost_delta_pct": 20.0, "eta_delta_days": -int(round(0.5 * (lead - 7)))})
+def alternatives_for(rec: dict) -> list[dict]:
+    """Plans built from the shipment data. Each one changes inputs the model uses, so it is re-scored."""
+    ships = datasets.history()
+    lane = ships[(ships.origin_port == rec.get("origin_port")) & (ships.destination_port == rec.get("destination_port"))]
+    pool = lane if len(lane) >= 10 else ships
+    best_rel = float(pool.reliability_score.quantile(0.9))
+    alts = []
+    if float(rec.get("reliability_score") or 1) < best_rel - 0.02:
+        alts.append({"id": "A1", "title": "Book a top-decile carrier",
+                     "description": f"Use a carrier from the top 10% on this lane: reliability {best_rel:.2f} across {len(pool):,} shipments.",
+                     "changes": {"reliability_score": f"^{best_rel:.3f}"}, "cost_delta_pct": 2.0, "eta_delta_days": 0})
+    cond = rec.get("weather_condition") or ""
+    if weather_index(rec) >= 70:
+        delay = 3 if cond != "Hurricane" else 5
+        alts.append({"id": "A2", "title": "Wait for the weather window",
+                     "description": f"Hold the departure {delay} days until the {cond.lower() or 'severe weather'} clears.",
+                     "changes": {"weather_condition": "Rain"}, "cost_delta_pct": 0.6, "eta_delta_days": delay})
+    if float(rec.get("geopolitical_risk_index") or 0) >= 50:
+        alts.append({"id": "A3", "title": "Reroute through a lower-risk corridor",
+                     "description": "Avoid the most exposed chokepoint: a longer route, but a third less geopolitical exposure.",
+                     "changes": {"geopolitical_risk_index": "*0.65", "distance_km": "*1.15"}, "cost_delta_pct": 1.8, "eta_delta_days": 4})
     return alts
 
 
@@ -127,8 +128,7 @@ def score_alternatives(rec: dict, base: dict, options: list[dict]) -> list[dict]
     out = []
     for o, (new, diffs), p in zip(options, applied, (float(x) for x in proba)):
         score = float(p * 100)
-        dis_cost = estimate_disruption_cost(value, float(new.get("lead_time_days") or 30))
-        loss = round(p * dis_cost, 0)
+        loss = round(p * estimate_disruption_cost(value, new.get("mode")), 0)
         cost = round(value * o["cost_delta_pct"] / 100, 0)
         avoided = round(base["expected_loss_usd"] - loss, 0)
         out.append({
@@ -153,7 +153,7 @@ def journey(rec: dict, today: date | None = None) -> dict | None:
         dep, eta = date.fromisoformat(rec["dispatch_date"]), date.fromisoformat(rec["eta_date"])
     except (KeyError, TypeError, ValueError):
         return None
-    today = today or date.today()
+    today = today or AS_OF
     total = max(1, (eta - dep).days)
     elapsed = (today - dep).days
     status = "Scheduled" if elapsed < 0 else ("Arrived" if today >= eta else "In transit")
@@ -162,10 +162,15 @@ def journey(rec: dict, today: date | None = None) -> dict | None:
             "days_to_eta": (eta - today).days, "status": status}
 
 
+INPUT_KEYS = ("lead_time_days", "reliability_score", "geopolitical_risk_index", "weather_condition", "weather_risk_index",
+              "weather_risk_level", "fuel_price_index", "distance_km", "weight_t", "average_cost_per_unit", "units")
+
+
 def score_records(records: list[dict], alternatives: dict[str, list[dict]] | None = None, with_alternatives: bool = True) -> list[dict]:
     """Score a batch of consignment records. Returns one result per record."""
     if not records:
         return []
+    records = [datasets.enrich(r) for r in records]
     model, meta = load_model()
     factors, X, proba = _predict(records)
     contribs = model.predict(xgb.DMatrix(X[FEATURE_KEYS]), pred_contribs=True)  # SHAP values, last col = bias
@@ -188,7 +193,8 @@ def score_records(records: list[dict], alternatives: dict[str, list[dict]] | Non
             })
         breakdown.sort(key=lambda b: -abs(b["contribution"]))
         top = next((b for b in breakdown if b["contribution"] > 0), None)
-        rec_out = recommend(f, rec, score, value)
+        ctx = datasets.context(rec)
+        rec_out = recommend(f, rec, score, value, ctx)
         cid = rec.get("consignment_id")
         result = {
             "consignment_id": cid, "supplier_id": rec.get("supplier_id"),
@@ -205,14 +211,12 @@ def score_records(records: list[dict], alternatives: dict[str, list[dict]] | Non
             "top_driver": {"key": top["key"], "label": top["label"], "value": top["value"]} if top else None,
             "cargo_value_usd": round(value, 0),
             "factors": breakdown,
-            "inputs": {k: rec.get(k) for k in (
-                "lead_time_days", "lead_time_std_days", "reliability_score", "geopolitical_risk_index",
-                "port_congestion_index", "weather_risk_index", "weather_risk_level", "price_swing_pct",
-                "days_since_last_disruption", "single_source", "average_cost_per_unit", "units", "annual_volume_units")},
+            "inputs": {k: rec.get(k) for k in INPUT_KEYS},
+            "context": ctx,
             **rec_out,
         }
         if with_alternatives:
-            options = alternatives.get(cid) or generic_alternatives(rec)
+            options = alternatives.get(cid) or alternatives_for(rec)
             result["alternatives"] = score_alternatives(rec, result, options)
             result["best_alternative"] = next((a for a in result["alternatives"] if a["recommended"]), None)
         results.append(result)
@@ -229,9 +233,10 @@ def portfolio_summary(results: list[dict]) -> dict:
     best = [r.get("best_alternative") for r in results if r.get("best_alternative")]
     js = [r["journey"] for r in results if r.get("journey")]
     in_transit = sum(1 for j in js if j["status"] == "In transit")
-    departing = sum(1 for j in js if j["status"] == "Scheduled" and (date.fromisoformat(j["dispatch_date"]) - date.today()).days <= 7)
+    departing = sum(1 for j in js if j["status"] == "Scheduled" and (date.fromisoformat(j["dispatch_date"]) - AS_OF).days <= 7)
     return {
         "n": len(results),
+        "as_of": AS_OF.isoformat(),
         "bands": bands,
         "n_at_risk": int(at_risk.sum()),
         "pct_at_risk": round(float(at_risk.mean() * 100), 1),

@@ -90,6 +90,11 @@
       </div>
 
       <div class="card">
+        <div class="card-head"><div><h2>Where the data comes from</h2><p class="muted">Every number in this portal is built from these four public Kaggle datasets.</p></div></div>
+        <div id="data-sources"></div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><div><h2>Recent disruptions on your lanes</h2><p class="muted" id="catch-rate"></p></div></div>
         <div id="recent-disruptions" class="table-wrap"></div>
       </div>
@@ -98,7 +103,7 @@
     <!-- CONSIGNMENTS -->
     <section class="view" id="view-consignments">
       <div class="card">
-        <div class="card-head"><div><h2>Consignment board</h2><p class="muted">Every active consignment, its journey and its 7-day disruption risk. Click a consignment to see what it is, how it is loaded and how it must be handled.</p></div>
+        <div class="card-head"><div><h2>Consignment board</h2><p class="muted">Every active consignment, its journey and its disruption risk. Click a consignment to see what it is, how it is loaded and how it must be handled.</p></div>
           <div class="legend-inline"><span><i class="lg low"></i>Low</span><span><i class="lg elevated"></i>Elevated</span><span><i class="lg high"></i>High</span></div></div>
         <div class="board-wrap"><div class="board" id="board"></div></div>
       </div>
@@ -120,9 +125,9 @@
     <section class="view" id="view-whatif">
       <div class="card wi-csv">
         <div class="wi-csv-row">
-          <div class="wi-csv-txt"><h2>Check a batch from CSV</h2><p class="muted">Upload a list of consignments. Problem rows are reported by line and field; valid rows are still scored.</p></div>
+          <div class="wi-csv-txt"><h2>Check a batch from CSV</h2><p class="muted">Upload shipments to score. If the file includes Disruption_Occurred, each prediction is checked against what really happened.</p></div>
           <div class="dropzone slim" id="dropzone"><input type="file" id="csv-input" accept=".csv,text/csv" hidden>
-            <span class="dz-ic" aria-hidden="true">⇪</span><span class="dz-t"><span><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button></span><small>Needs consignment_id, lead_time_days, reliability_score, geopolitical_risk_index, weather_risk_level</small></span></div>
+            <span class="dz-ic" aria-hidden="true">⇪</span><span class="dz-t"><span><strong>Drop a CSV here</strong> or <button type="button" class="link" id="csv-browse">browse</button></span><small>Takes the Kaggle shipment file as-is: Shipment_ID, Carrier_Reliability_Score, Geopolitical_Risk_Score, Weather_Condition and more</small></span></div>
           <a class="btn btn-secondary" href="/api/template.csv">Download template</a>
         </div>
         <div id="csv-result"></div>
