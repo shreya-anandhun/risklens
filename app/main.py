@@ -399,13 +399,18 @@ def _trend_direction(t: list[float]) -> str:
 @app.get("/api/export.csv")
 def export_csv():
     """The consignment board as a CSV. Input columns use the Kaggle names, so the file uploads straight back into What-if."""
-    rows = []
-    for r in book():
-        j, i, t, best = r["journey"] or {}, r["inputs"], r.get("trend") or [], r.get("best_alternative")
-        acts = [x["action"] for x in r["recommendations"] if x["id"] != "maintain"]
-        rows.append({
+    out = pd.DataFrame([export_row(r) for r in book()]).to_csv(index=False)
+    return Response(out, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=risklens_consignments.csv"})
+
+
+def export_row(r: dict) -> dict:
+    """One scored consignment as a CSV row: Kaggle-layout inputs, then the board's columns."""
+    j, i, t, best = r["journey"] or {}, r["inputs"], r.get("trend") or [], r.get("best_alternative")
+    acts = [x["action"] for x in r["recommendations"] if x["id"] != "maintain"]
+    return {
             # inputs, in the Kaggle shipment layout
-            "Shipment_ID": r["consignment_id"], "Cargo": r["cargo"], "Product_Category": r["product_category"], "Supplier": r["supplier_name"],
+            "Shipment_ID": r["consignment_id"], "Cargo": r["cargo"], "Product_Category": r["product_category"],
+            "Supplier_ID": r.get("supplier_id"), "Supplier": r["supplier_name"],
             "Origin_Port": r["origin_port"], "Origin_Country": r["origin_country"], "Destination_Port": r["destination_port"],
             "Destination_Country": r["destination_country"], "Transport_Mode": r["mode"], "Weight_MT": i.get("weight_t"),
             "Distance_km": i.get("distance_km"), "Fuel_Price_Index": i.get("fuel_price_index"),
@@ -427,9 +432,7 @@ def export_csv():
             "Alternative_Net_Benefit_USD": best["net_benefit_usd"] if best else None,
             "Alternative_ETA_Change_Days": best["eta_delta_days"] if best else None,
             "Recommended_Actions": " | ".join(acts) if acts else "Stay on the current plan",
-        })
-    out = pd.DataFrame(rows).to_csv(index=False)
-    return Response(out, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=risklens_consignments.csv"})
+        }
 
 
 # ---------------------------------------------------------------------------

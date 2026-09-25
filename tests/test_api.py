@@ -230,3 +230,14 @@ def test_serving_does_not_need_scikit_learn():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-800:]
+
+
+def test_sample_new_consignments_add_ten_to_the_board(client):
+    from pathlib import Path
+    raw = (Path(__file__).resolve().parent.parent / "data" / "samples" / "new_consignments.csv").read_bytes()
+    r = client.post("/api/score/csv", files={"file": ("new.csv", raw, "text/csv")}).json()
+    assert r["rows_scored"] == 10 and not r["errors"] and not r["warnings"]
+    n = len(client.get("/api/consignments").json())
+    assert client.post("/api/consignments/import", json={"records": r["records"]}).json()["added"] == 10
+    o = client.get("/api/overview").json()
+    assert o["summary"]["n"] == n + 10 and all(x["journey"] and x["trend"] for x in o["consignments"])
