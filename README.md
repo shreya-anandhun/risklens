@@ -11,7 +11,7 @@ Predict which shipments will be disrupted in the next 7 days, see why, and act b
 [![Deploy with Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fshreya-anandhun%2Frisklens)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**[Live demo](LIVE_URL)** · [Features](#features) · [Tech stack](#tech-stack) · [How it works](#how-it-works) · [Getting started](#getting-started) · [API](#api-reference)
+**[Live demo](https://risklens-risklens1.vercel.app)** · [Features](#features) · [Tech stack](#tech-stack) · [How it works](#how-it-works) · [Getting started](#getting-started) · [API](#api-reference)
 
 <img src="docs/images/overview.png" alt="RiskLens overview page with the 3D risk globe" width="900">
 
