@@ -1,0 +1,5 @@
+# Training, evaluation and tests, on top of the runtime dependencies.
+-r requirements.txt
+scikit-learn>=1.5,<1.7
+pytest>=8.0
+httpx>=0.27

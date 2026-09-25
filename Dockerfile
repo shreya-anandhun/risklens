@@ -1,5 +1,5 @@
-# RiskLens portal: FastAPI + XGBoost. Works on Render, Railway, Fly.io, Hugging Face Spaces or any Docker host.
-FROM python:3.11-slim
+# RiskLens: FastAPI + XGBoost web app. Runs on any Docker host.
+FROM python:3.12-slim
 
 # XGBoost needs the OpenMP runtime on Linux.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*

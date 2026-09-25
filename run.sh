@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 if [ ! -d .venv ]; then
   python3 -m venv .venv
   .venv/bin/pip install -q --upgrade pip
-  .venv/bin/pip install -q -r requirements.txt
+  .venv/bin/pip install -q -r requirements-dev.txt
 fi
 if [ ! -f models/risk_model.json ]; then
   .venv/bin/python -m risklens.pipeline

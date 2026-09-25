@@ -1,11 +1,9 @@
-# Runtime (versions match what the portal and tests were verified with)
+# Runtime dependencies: what the web app needs to serve predictions.
 numpy>=2.0,<2.3
 pandas>=2.2,<2.4
-scikit-learn>=1.5,<1.7
-xgboost>=2.1,<2.2
+# The CPU-only XGBoost build keeps Linux installs small (no CUDA libraries).
+xgboost-cpu>=2.1,<2.2; sys_platform == "linux"
+xgboost>=2.1,<2.2; sys_platform != "linux"
 fastapi>=0.110,<1.0
-uvicorn[standard]>=0.29,<1.0
+uvicorn>=0.29,<1.0
 python-multipart>=0.0.9
-# Tests
-pytest>=8.0
-httpx>=0.27

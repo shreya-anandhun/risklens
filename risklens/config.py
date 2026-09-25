@@ -1,12 +1,14 @@
 """Central configuration for RiskLens: paths, feature definitions, thresholds."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_RAW = ROOT / "data" / "raw"
 DATA_PROCESSED = ROOT / "data" / "processed"
-DATA_PORTAL = ROOT / "data" / "portal"
+# Serverless hosts (Vercel) only allow writes under /tmp.
+DATA_PORTAL = Path("/tmp/risklens/portal") if os.environ.get("VERCEL") else ROOT / "data" / "portal"
 MODELS = ROOT / "models"
 
 MODEL_PATH = MODELS / "risk_model.json"
